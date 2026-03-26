@@ -83,4 +83,9 @@ if (hasUsers === 0) {
 // Seed default demo license
 db.prepare('INSERT OR IGNORE INTO licenses (license_key, fingerprint, status) VALUES (?, ?, ?)').run('STPRO-FIRST', '', 'active');
 
+// Seed initial activation codes (demo codes)
+const seedCodes = ['DEMO-0001', 'DEMO-0002', 'DEMO-0003'];
+const insertCode = db.prepare('INSERT OR IGNORE INTO codes (code, status) VALUES (?, ?)');
+for (const code of seedCodes) insertCode.run(code, 'active');
+
 module.exports = db;
