@@ -35,13 +35,20 @@ app.get('/api/version', (req, res) => {
   res.json({ version: APP_VERSION });
 });
 
-// IMPORTANT: Generator page BEFORE static middleware
+// Generator page - serve as HTML directly
 app.get('/license-generator', (req, res) => {
   res.sendFile(path.join(__dirname, '../../public/generator.html'));
 });
 
-// Static files (customer app)
-app.use(express.static(path.join(__dirname, '../../frontend/dist')));
+// Static files (customer app) - but exclude generator
+app.use(express.static(path.join(__dirname, '../../frontend/dist'), {
+  setHeaders: (res, path) => {
+    // Don't cache HTML
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 
 // Catch-all for SPA
 app.get('*', (req, res) => {
