@@ -45,9 +45,6 @@ app.get('/api/version', (req, res) => {
 });
 
 // Generator page - serve as HTML directly
-app.get('/license-generator', (req, res) => {
-  res.sendFile(path.join(__dirname, '../../public/generator.html'));
-});
 
 // Static files (customer app) - but exclude generator
 app.use(express.static(path.join(__dirname, '../../frontend/dist'), {
