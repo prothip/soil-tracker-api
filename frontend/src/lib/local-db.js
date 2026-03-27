@@ -406,55 +406,41 @@ export async function getAllTimeStats() {
 
 export async function getRangeStats(siteId, start, end, materialId) {
   if (!db) await initDB()
-  let whereSQL = 'WHERE d.site_id = ? AND d.date BETWEEN ? AND ?'
-  let values = [siteId, start, end]
+  
+  try {
+    // Grand totals - simple query
+    let grandSql = 'SELECT COUNT(*) as total_lots, COALESCE(SUM(weight_tons), 0) as total_tons FROM deliveries WHERE site_id = ? AND date >= ? AND date <= ?'
+    let grandParams = [siteId, start, end]
+    if (materialId) { grandSql += ' AND material_id = ?'; grandParams.push(materialId) }
+    
+    const grandResult = await db.query(grandSql, grandParams)
+    const grand = grandResult.values?.[0] || { total_lots: 0, total_tons: 0 }
 
-  if (materialId) {
-    whereSQL += ' AND d.material_id = ?'
-    values.push(materialId)
+    // Daily - simple query  
+    let dailySql = 'SELECT date, COUNT(*) as lots, COALESCE(SUM(weight_tons), 0) as tons FROM deliveries WHERE site_id = ? AND date >= ? AND date <= ?'
+    let dailyParams = [siteId, start, end]
+    if (materialId) { dailySql += ' AND material_id = ?'; dailyParams.push(materialId) }
+    dailySql += ' GROUP BY date ORDER BY date'
+    
+    const dailyResult = await db.query(dailySql, dailyParams)
+    const daily = dailyResult.values || []
+
+    // By truck - needs JOIN
+    let truckSql = `SELECT t.plate_number, t.driver_name, COUNT(*) as lots, COALESCE(SUM(d.weight_tons), 0) as tons
+      FROM deliveries d JOIN trucks t ON d.truck_id = t.id
+      WHERE d.site_id = ? AND d.date >= ? AND d.date <= ?`
+    let truckParams = [siteId, start, end]
+    if (materialId) { truckSql += ' AND d.material_id = ?'; truckParams.push(materialId) }
+    truckSql += ' GROUP BY t.id, t.plate_number, t.driver_name ORDER BY tons DESC'
+    
+    const truckResult = await db.query(truckSql, truckParams)
+    const byTruck = truckResult.values || []
+
+    return { daily, byTruck, grand }
+  } catch(e) {
+    console.error('getRangeStats error:', e)
+    return { daily: [], byTruck: [], grand: { total_lots: 0, total_tons: 0 } }
   }
-
-  // Daily breakdown
-  let dailyValues = [siteId, start, end]
-  let dailyWhere = 'WHERE site_id = ? AND date BETWEEN ? AND ?'
-  if (materialId) { dailyWhere += ' AND material_id = ?'; dailyValues.push(materialId) }
-  const dailyQuery = `
-    SELECT date, COUNT(*) as lots, COALESCE(SUM(weight_tons), 0) as tons
-    FROM deliveries
-    ${dailyWhere}
-    GROUP BY date ORDER BY date
-  `
-  const dailyResult = await db.query(dailyQuery, dailyValues)
-  const daily = dailyResult.values || []
-
-  // By truck
-  let truckWhere = 'WHERE d.site_id = ? AND d.date BETWEEN ? AND ?'
-  let truckValues = [siteId, start, end]
-  if (materialId) { truckWhere += ' AND d.material_id = ?'; truckValues.push(materialId) }
-  const truckQuery = `
-    SELECT t.plate_number, t.driver_name, COUNT(*) as lots, COALESCE(SUM(d.weight_tons), 0) as tons
-    FROM deliveries d
-    JOIN trucks t ON d.truck_id = t.id
-    ${truckWhere}
-    GROUP BY t.id, t.plate_number, t.driver_name
-    ORDER BY tons DESC
-  `
-  const truckResult = await db.query(truckQuery, truckValues)
-  const byTruck = truckResult.values || []
-
-  // Grand totals
-  let grandValues = [siteId, start, end]
-  let grandWhere = 'WHERE site_id = ? AND date BETWEEN ? AND ?'
-  if (materialId) { grandWhere += ' AND material_id = ?'; grandValues.push(materialId) }
-  const grandQuery = `
-    SELECT COUNT(*) as total_lots, COALESCE(SUM(weight_tons), 0) as total_tons
-    FROM deliveries
-    ${grandWhere}
-  `
-  const grandResult = await db.query(grandQuery, grandValues)
-  const grand = grandResult.values?.[0] || { total_lots: 0, total_tons: 0 }
-
-  return { daily, byTruck, grand }
 }
 
 // ─── User Authentication ─────────────────────────────────────────────────────
@@ -675,13 +661,25 @@ export async function exportDatabase() {
 // Export to PDF (simple HTML-based PDF generation)
 export async function exportToPDF(siteId, start, end, materialId, siteName, reportData) {
   const html = generateReportHTML(siteName, start, end, reportData)
-  const filename = `report-${start}-to-${end}.pdf`
+  const filename = `report-${start}-to-${end}.html`
 
-  // For now, generate HTML and trigger print dialog (browser's "Save as PDF")
-  const printWindow = window.open('', '_blank')
-  printWindow.document.write(html)
-  printWindow.document.close()
-  printWindow.print()
+  // Write HTML to cache directory
+  await Filesystem.writeFile({
+    path: filename,
+    data: html,
+    directory: Directory.Cache,
+    encoding: 'utf8'
+  })
+
+  const fileUri = await Filesystem.getUri({ path: filename, directory: Directory.Cache })
+
+  // Open the HTML file in a new window for printing
+  const printWindow = window.open(fileUri.uri, '_blank')
+  if (printWindow) {
+    printWindow.addEventListener('load', () => {
+      printWindow.print()
+    })
+  }
 
   return { success: true, filename }
 }
