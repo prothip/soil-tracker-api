@@ -6,8 +6,8 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-// Determine base directory
-const BASE_DIR = path.resolve(__dirname);
+// Determine base directory - go up from src folder
+const BASE_DIR = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(BASE_DIR, 'public');
 
 app.use(cors({
