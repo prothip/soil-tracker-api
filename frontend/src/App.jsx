@@ -1104,11 +1104,13 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs font-medium text-muted block mb-1">From</label>
-              <DatePicker value={repStart} onChange={setRepStart} />
+              <input type="date" value={repStart} onChange={e => setRepStart(e.target.value)}
+                className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted block mb-1">To</label>
-              <DatePicker value={repEnd} onChange={setRepEnd} />
+              <input type="date" value={repEnd} onChange={e => setRepEnd(e.target.value)}
+                className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" />
             </div>
           </div>
           <div className="flex gap-2">
@@ -1139,10 +1141,6 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
               <button onClick={async () => { try { await exportToPDF(repSite || siteId, repStart, repEnd, repMat||undefined, sites.find(s => s.id == (repSite || siteId))?.name || '', { ...reportData, deliveries: reportDeliveries }); showToast('PDF generated', 'success') } catch(e) { showToast(e.message, 'error') } }}
                 className="h-9 px-3 bg-primary text-white text-sm font-medium rounded-lg flex items-center gap-1.5">
                 <Download size={14} /> Print
-              </button>
-              <button onClick={async () => { try { await exportToExcel(repSite || siteId, repStart, repEnd, repMat||undefined, { ...reportData, deliveries: reportDeliveries }); showToast('Excel generated', 'success') } catch(e) { showToast(e.message, 'error') } }}
-                className="h-9 px-3 bg-success text-white text-sm font-medium rounded-lg flex items-center gap-1.5">
-                <Download size={14} /> Excel
               </button>
               <button onClick={() => setShowReport(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-text">
                 <X size={16} />
@@ -1505,7 +1503,7 @@ export default function App() {
     try { closeDB() } catch (e) { console.error('closeDB failed:', e) }
     localStorage.removeItem('stp_token')
     localStorage.removeItem('stp_user')
-    localStorage.removeItem('stp_code')
+    // localStorage.removeItem('stp_code') // Keep activated flag
     localStorage.removeItem('stp_remember_me')
     localStorage.removeItem('stp_saved_username')
     setUser(null)
