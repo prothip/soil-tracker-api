@@ -63,26 +63,12 @@
       color: white;
     }
     .btn-primary:hover { background: #1D4ED8; }
-    .btn-secondary {
-      background: #F1F5F9;
-      color: #0F172A;
-      border: 1px solid #CBD5E1;
-    }
-    .btn-secondary:hover { background: #E2E8F0; }
-    .btn-success {
-      background: #16A34A;
-      color: white;
-    }
-    .btn-danger {
-      background: #DC2626;
-      color: white;
-    }
     .input-group {
       display: flex;
       gap: 12px;
       margin-bottom: 20px;
     }
-    .input-group input, .input-group select {
+    .input-group select {
       flex: 1;
       height: 44px;
       padding: 0 16px;
@@ -90,11 +76,6 @@
       border: 1px solid #CBD5E1;
       font-size: 14px;
       background: white;
-    }
-    .input-group input:focus, .input-group select:focus {
-      outline: none;
-      border-color: #2563EB;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     }
     .code-list {
       display: flex;
@@ -138,22 +119,12 @@
       justify-content: center;
       transition: all 0.15s;
     }
-    .code-item .actions button:hover {
-      background: #F1F5F9;
-    }
-    .code-item .actions button.delete:hover {
-      background: #FEF2F2;
-      border-color: #FECACA;
-      color: #DC2626;
-    }
+    .code-item .actions button:hover { background: #F1F5F9; }
+    .code-item .actions button.delete:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
     .empty-state {
       text-align: center;
       padding: 40px 20px;
       color: #64748B;
-    }
-    .empty-state svg {
-      margin-bottom: 12px;
-      opacity: 0.5;
     }
     .toast {
       position: fixed;
@@ -182,14 +153,8 @@
       font-weight: 600;
       text-transform: uppercase;
     }
-    .badge-active {
-      background: #DCFCE7;
-      color: #16A34A;
-    }
-    .badge-used {
-      background: #FEE2E2;
-      color: #DC2626;
-    }
+    .badge-active { background: #DCFCE7; color: #16A34A; }
+    .badge-used { background: #FEE2E2; color: #DC2626; }
   </style>
 </head>
 <body>
@@ -199,7 +164,6 @@
       <p>Offline License Key Generator</p>
     </div>
 
-    <!-- Generate new code -->
     <div class="card">
       <h2>📱 Generate Activation Code</h2>
       <div class="input-group">
@@ -222,17 +186,10 @@
       </div>
     </div>
 
-    <!-- Code list -->
     <div class="card">
       <h2>🔑 Generated Codes</h2>
       <div id="codeList" class="code-list">
-        <div class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 16v-4M12 8h.01"/>
-          </svg>
-          <p>No codes generated yet.<br>Click "Generate Code" to create one.</p>
-        </div>
+        <div class="empty-state">No codes yet. Click "Generate Code" to create one.</div>
       </div>
     </div>
   </div>
@@ -243,7 +200,6 @@
     const API_BASE = window.location.origin;
     let codes = [];
 
-    // Load codes on startup
     async function loadCodes() {
       try {
         const res = await fetch(`${API_BASE}/api/offline/codes`);
@@ -255,7 +211,6 @@
       }
     }
 
-    // Generate new code
     async function generateCode() {
       const expiryDays = document.getElementById('expiryDays').value;
       try {
@@ -266,7 +221,6 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to generate');
-        
         codes.unshift(data.codes[0]);
         renderCodes();
         showToast('Code generated!', 'success');
@@ -275,7 +229,6 @@
       }
     }
 
-    // Copy code to clipboard
     async function copyCode(code) {
       try {
         await navigator.clipboard.writeText(code);
@@ -285,7 +238,6 @@
       }
     }
 
-    // Delete code
     async function deleteCode(id) {
       if (!confirm('Delete this code?')) return;
       try {
@@ -298,62 +250,34 @@
       }
     }
 
-    // Render code list
     function renderCodes() {
       const container = document.getElementById('codeList');
-      
       if (codes.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 16v-4M12 8h.01"/>
-            </svg>
-            <p>No codes generated yet.<br>Click "Generate Code" to create one.</p>
-          </div>
-        `;
+        container.innerHTML = '<div class="empty-state">No codes yet. Click "Generate Code" to create one.</div>';
         return;
       }
-
       container.innerHTML = codes.map(code => {
         const isActive = code.status === 'active';
         const expiryDate = code.expires_at ? new Date(code.expires_at).toLocaleDateString() : 'Never';
-        const usedDate = code.used_at ? new Date(code.used_at).toLocaleString() : null;
-        
         return `
           <div class="code-item">
-            <div class="flex-1">
+            <div>
               <div class="code">${code.code}</div>
               <div class="meta">
-                <span class="badge ${isActive ? 'badge-active' : 'badge-used'}">
-                  ${isActive ? 'Active' : 'Used'}
-                </span>
-                ${isActive ? `· Expires: ${expiryDate}` : ''}
-                ${usedDate ? `<br>Used: ${usedDate}` : ''}
-                Created: ${new Date(code.created_at).toLocaleString()}
+                <span class="badge ${isActive ? 'badge-active' : 'badge-used'}">${isActive ? 'Active' : 'Used'}</span>
+                ${isActive ? ` · Expires: ${expiryDate}` : ''}
+                ${code.used_at ? `<br>Used: ${new Date(code.used_at).toLocaleString()}` : ''}
               </div>
             </div>
             <div class="actions">
-              ${isActive ? `
-                <button onclick="copyCode('${code.code}')" title="Copy">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2"/>
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                  </svg>
-                </button>
-              ` : ''}
-              <button class="delete" onclick="deleteCode(${code.id})" title="Delete">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                </svg>
-              </button>
+              ${isActive ? `<button onclick="copyCode('${code.code}')" title="Copy">📋</button>` : ''}
+              <button class="delete" onclick="deleteCode(${code.id})" title="Delete">🗑️</button>
             </div>
           </div>
         `;
       }).join('');
     }
 
-    // Show toast
     function showToast(message, type = 'success') {
       const toast = document.getElementById('toast');
       toast.textContent = message;
@@ -361,9 +285,7 @@
       setTimeout(() => toast.className = 'toast', 2500);
     }
 
-    // Init
     loadCodes();
-    // Refresh every 10 seconds
     setInterval(loadCodes, 10000);
   </script>
 </body>
