@@ -495,7 +495,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
 }
 
 // ─── Dashboard Page ─────────────────────────────────────────────────────────────
-function DashboardPage({ siteId, sites, trucks, onChangeSite }) {
+function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0 }) {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const { show: showToast } = useToast()
@@ -517,7 +517,7 @@ function DashboardPage({ siteId, sites, trucks, onChangeSite }) {
       setStats({ ...d.stats, grand_lots: count.count, grand_tons: allTime.total_tons || 0, weekStats: week.daily || [] })
       setLoading(false)
     }).catch(() => setLoading(false))
-  }, [siteId])
+  }, [siteId, refreshKey])
 
   const todayDeliveries = stats?.stats?.total_lots || 0
   const todayTons = stats?.stats?.total_tons || 0
@@ -1440,6 +1440,7 @@ export default function App() {
   const token = localStorage.getItem('stp_token')
   const activated = localStorage.getItem('stp_code')
   const [tab, setTab] = useState('dashboard')
+  const [refreshKey, setRefreshKey] = useState(0)
   const [dark, setDark] = useState(() => localStorage.getItem('stp_dark') === '1')
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateDismissed, setUpdateDismissed] = useState(false)
@@ -1485,7 +1486,7 @@ export default function App() {
   function loadSites() { initDB().then(() => getSites().then(setSites).catch(() => {})) }
   function loadTrucks() { initDB().then(() => getTrucks().then(setTrucks).catch(() => {})) }
   function loadMaterials() { initDB().then(() => getMaterials().then(setMaterials).catch(() => {})) }
-  function loadAll() { loadSites(); loadTrucks(); loadMaterials() }
+  function loadAll() { loadSites(); loadTrucks(); loadMaterials(); setRefreshKey(k => k + 1) }
 
   useEffect(() => { if (activated) loadAll() }, [])
 
@@ -1498,7 +1499,7 @@ export default function App() {
 
   // Auth check
   if (!activated && !token) return <ActivationScreen onSuccess={() => window.location.reload()} />
-  if (!user && token) return <LoginPage onLogin={setUser} />
+  if (!user) return <LoginPage onLogin={setUser} />
 
   async function handleLogout() {
     try { await closeDB() } catch (e) { console.error('closeDB failed:', e) }
@@ -1541,7 +1542,7 @@ export default function App() {
       )}
 
       <main className="flex-1 overflow-y-auto pb-[72px]">
-        {tab === 'dashboard' && <DashboardPage siteId={siteId} sites={sites} trucks={trucks} onChangeSite={setSiteId} />}
+        {tab === 'dashboard' && <DashboardPage key={refreshKey} siteId={siteId} sites={sites} trucks={trucks} onChangeSite={setSiteId} />}
         {tab === 'log' && <LogPage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefresh={loadAll} showQr={showQr} setShowQr={setShowQr} onQrScan={handleQrScan} scannedTruckId={scannedTruckId} onScannedTruckUsed={() => setScannedTruckId(null)} />}
         {tab === 'trucks' && <TrucksPage trucks={trucks} onRefresh={loadTrucks} setShowQrModalFor={setShowQrModalFor} />}
         {tab === 'more' && <MorePage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefreshSites={loadSites} onRefreshTrucks={loadTrucks} onRefreshMaterials={loadMaterials} onRefreshAll={loadAll} user={user} />}
