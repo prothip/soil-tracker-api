@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+export PATH="$PATH:/usr/local/bin:/usr/bin"
 cd backend
 npm install --omit=dev
-node src/index.js
+exec node src/index.js
