@@ -1,4 +1,4 @@
-#!/bin/bash -l
+#!/bin/bash
 cd backend
-npm install --omit=dev
-exec node src/index.js
+npm install
+npx node src/index.js
