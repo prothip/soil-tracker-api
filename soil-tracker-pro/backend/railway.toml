@@ -1,5 +1,5 @@
 [railway]
-  name = "soil-tracker-api"
+  name = "soil-tracker-pro"
   version = 2
 
 [deploy]
@@ -9,4 +9,3 @@
 
 [environment]
   NODE_ENV = "production"
-  PORT = "3002"
