@@ -1,5 +1,5 @@
 // Customer app: uses device tokens via activation code
-const STP_API = 'https://soil-tracker-pro.onrender.com'
+const STP_API = 'https://soil-tracker-api-production.up.railway.app'
 
 export { STP_API }
 

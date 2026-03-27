@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
@@ -26,6 +26,14 @@ export default function DatePicker({ value, onChange }) {
 
   const [open, setOpen] = useState(false)
   const [view, setView] = useState({ y: current.y, m: current.m })
+
+  // Sync view when value changes externally
+  useEffect(() => {
+    const parsed = toVal(value)
+    if (parsed) {
+      setView({ y: parsed.y, m: parsed.m })
+    }
+  }, [value])
 
   const firstDay = new Date(view.y, view.m - 1, 1).getDay()
   const daysInMonth = new Date(view.y, view.m, 0).getDate()

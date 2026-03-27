@@ -8,6 +8,7 @@ import {
 import DatePicker from './components/DatePicker'
 import { api, STP_API } from './lib/api-customer'
 import { VERSION } from './version'
+import { initDB, closeDB, getDailyStats, getCount, getAllTimeStats, getRangeStats, getDeliveries, exportDatabase, exportToPDF, exportToExcel, exportToCSV, getSites, getTrucks, getMaterials, createSite, updateSite, deleteSite, createMaterial, updateMaterial, deleteMaterial, createDelivery, updateDelivery, deleteDelivery, checkLot, getNextLot, resetAllData, updateUserPassword, verifyUser, createUser, hasAnyUser, getUserByUsername, deleteTruck, reactivateTruck, createTruck, updateTruck, importDatabase } from './lib/local-db'
 const QrScanner = lazy(() => import('./components/QrScanner'))
 const TruckQrModal = lazy(() => import('./components/TruckQrModal'))
 
@@ -36,33 +37,24 @@ function ActivationScreen({ onSuccess }) {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
-  function format(v) {
-    const c = v.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 16)
-    const parts = []
-    for (let i = 0; i < c.length; i += 4) parts.push(c.slice(i, i + 4))
-    return parts.join('-')
-  }
-
   async function handle(e) {
     e.preventDefault()
-    if (code.replace(/-/g, '').length < 4) { setErr('Please enter a complete activation code'); return }
+    if (code.length < 4) { setErr('Please enter your activation code'); return }
     setErr(''); setLoading(true)
     try {
-      const res = await fetch(`${STP_API}/api/auth/device-login`, {
+      const res = await fetch(`${STP_API}/api/offline/activate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code })
+        body: JSON.stringify({ activationCode: code })
       })
       const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      localStorage.setItem('stp_token', data.token)
+      if (!res.ok || data.error) throw new Error(data.error || 'Activation failed')
+      localStorage.setItem('stp_token', data.deviceId)
       localStorage.setItem('stp_code', code)
-      onSuccess(data.token)
+      onSuccess(data.deviceId)
     } catch (e) {
       setErr(e.message || 'Activation failed')
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
@@ -79,14 +71,14 @@ function ActivationScreen({ onSuccess }) {
           <div>
             <label className="text-sm font-medium text-text block mb-1.5">Activation Code</label>
             <input
-              value={code} onChange={e => { setCode(format(e.target.value)); setErr('') }}
-              placeholder="XXXX-XXXX-XXXX-XXXX"
-              className="w-full h-12 px-3 rounded-xl border border-border bg-surface text-center text-lg font-mono tracking-widest placeholder-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 uppercase"
+              value={code} onChange={e => { setCode(e.target.value.toUpperCase()); setErr('') }}
+              placeholder="STP-XXXXXXXX"
+              className="w-full h-12 px-3 rounded-xl border border-border bg-surface text-center text-lg font-mono uppercase"
               autoComplete="off" autoCapitalize="characters"
             />
           </div>
           <button type="submit" disabled={loading}
-            className="w-full h-11 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50">
+            className="w-full h-11 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 disabled:opacity-50">
             {loading ? 'Activating...' : 'Activate'}
           </button>
           <p className="text-xs text-muted text-center">Contact your administrator for an activation code</p>
@@ -98,166 +90,114 @@ function ActivationScreen({ onSuccess }) {
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
+  const [step, setStep] = useState('check')
   const [u, setU] = useState('')
   const [p, setP] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
-  const [showForgot, setShowForgot] = useState(false)
-  const [forgotCode, setForgotCode] = useState('')
-  const [forgotStep, setForgotStep] = useState(1) // 1=enter code, 2=enter new password
-  const [newPass, setNewPass] = useState('')
-  const [newUser, setNewUser] = useState('')
-  const [forgotMsg, setForgotMsg] = useState('')
 
-  async function handle(e) {
+  useEffect(() => {
+    initDB().then(async () => {
+      const has = await hasAnyUser()
+      setStep(has ? 'login' : 'setup')
+    }).catch(() => setStep('login'))
+  }, [])
+
+  async function handleSetup(e) {
     e.preventDefault()
     if (!u.trim()) { setErr('Please enter username'); return }
     if (!p) { setErr('Please enter password'); return }
-    setErr('')
-    setLoading(true)
+    if (p !== confirm) { setErr('Passwords do not match'); return }
+    if (p.length < 4) { setErr('Password must be at least 4 characters'); return }
+    setErr(''); setLoading(true)
     try {
-      const res = await fetch(`${STP_API}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p })
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || 'Login failed — check credentials')
-      localStorage.setItem('stp_token', data.token)
-      localStorage.setItem('stp_user', JSON.stringify(data.user))
-      onLogin(data.user)
+      await createUser(u.trim(), p)
+      const user = { id: 'local', username: u.trim(), role: 'admin' }
+      localStorage.setItem('stp_user', JSON.stringify(user))
+      onLogin(user)
     } catch (e) {
-      setErr(e.message || 'Login failed — check credentials')
-    } finally {
-      setLoading(false)
-    }
+      if (e.message?.includes('UNIQUE')) setErr('Username already exists')
+      else setErr(e.message || 'Failed to create account')
+    } finally { setLoading(false) }
   }
 
-  async function handleForgotSubmit() {
-    if (forgotStep === 1) {
-      // Verify activation code
-      if (!forgotCode || forgotCode.replace(/-/g, "").length < 4) {
-        setForgotMsg('Enter a valid activation code')
-        return
-      }
-      setForgotMsg('Verifying...')
-      try {
-        const res = await fetch(`${STP_API}/api/auth/verify-code`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: forgotCode })
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok || !data.valid) throw new Error('Invalid activation code')
-        setForgotStep(2)
-        setForgotMsg('Code verified! Now set your new username and password.')
-      } catch (e) {
-        setForgotMsg(e.message || 'Invalid activation code')
-      }
-    } else {
-      // Reset password with code
-      if (!newUser.trim() || !newPass) {
-        setForgotMsg('Enter new username and password')
-        return
-      }
-      if (newPass.length < 4) {
-        setForgotMsg('Password must be at least 4 characters')
-        return
-      }
-      setForgotMsg('Resetting...')
-      try {
-        const res = await fetch(`${STP_API}/api/auth/reset-with-code`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code: forgotCode, username: newUser, password: newPass })
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.error || 'Reset failed')
-        setForgotMsg('Password reset! You can now login.')
-        setShowForgot(false)
-        setForgotStep(1)
-        setForgotCode('')
-        setNewUser('')
-        setNewPass('')
-      } catch (e) {
-        setForgotMsg(e.message || 'Reset failed')
-      }
-    }
+  async function handleLogin(e) {
+    e.preventDefault()
+    if (!u.trim()) { setErr('Please enter username'); return }
+    if (!p) { setErr('Please enter password'); return }
+    setErr(''); setLoading(true)
+    try {
+      const result = await verifyUser(u.trim(), p)
+      if (!result.valid) throw new Error('Invalid username or password')
+      localStorage.setItem('stp_user', JSON.stringify(result.user))
+      onLogin(result.user)
+    } catch (e) {
+      setErr(e.message || 'Login failed')
+    } finally { setLoading(false) }
+  }
+
+  if (step === 'check') {
+    return <div className="min-h-screen bg-bg flex items-center justify-center"><div className="text-muted">Loading...</div></div>
+  }
+
+  if (step === 'setup') {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <div className="text-3xl font-bold text-text tracking-tight mb-1">Soil Tracker <span className="text-accent">Pro</span></div>
+            <p className="text-muted text-sm">Create your account</p>
+          </div>
+          <form onSubmit={handleSetup} className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4">
+            {err && <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg">{err}</div>}
+            <div>
+              <label className="text-sm font-medium text-text block mb-2">Username</label>
+              <input value={u} onChange={e => setU(e.target.value)} placeholder="Admin"
+                className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" autoComplete="off" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-text block mb-2">Password</label>
+              <input type="password" value={p} onChange={e => setP(e.target.value)} placeholder="••••••••"
+                className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-text block mb-2">Confirm Password</label>
+              <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="••••••••"
+                className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" />
+            </div>
+            <button type="submit" disabled={loading} className="w-full h-12 bg-primary text-white font-semibold rounded-xl disabled:opacity-50">
+              {loading ? 'Creating...' : 'Create Account'}
+            </button>
+            <p className="text-xs text-center text-muted">Default: Admin / admin123</p>
+          </form>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-bg flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="text-3xl font-bold text-text tracking-tight">Soil Tracker <span className="text-accent">Pro</span></div>
-          <p className="text-muted text-sm mt-1">Sign in to continue</p>
+          <div className="text-3xl font-bold text-text tracking-tight mb-1">Soil Tracker <span className="text-accent">Pro</span></div>
+          <p className="text-muted text-sm">Sign in to continue</p>
         </div>
-        <form onSubmit={handle} className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4">
-          {err && <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg flex items-center gap-2">
-            <AlertCircle size={16} /><span>{err}</span>
-          </div>}
+        <form onSubmit={handleLogin} className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4">
+          {err && <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg">{err}</div>}
           <div>
-            <label className="text-sm font-medium text-text block mb-1.5">Username</label>
-            <input value={u} onChange={e => setU(e.target.value)} className="w-full h-11 px-3 rounded-lg border border-border bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="admin" />
+            <label className="text-sm font-medium text-text block mb-2">Username</label>
+            <input value={u} onChange={e => setU(e.target.value)} placeholder="Username"
+              className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" autoComplete="off" />
           </div>
           <div>
-            <label className="text-sm font-medium text-text block mb-1.5">Password</label>
-            <input type="password" value={p} onChange={e => setP(e.target.value)} className="w-full h-11 px-3 rounded-lg border border-border bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="••••••••" />
+            <label className="text-sm font-medium text-text block mb-2">Password</label>
+            <input type="password" value={p} onChange={e => setP(e.target.value)} placeholder="••••••••"
+              className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" />
           </div>
-          <button type="submit" disabled={loading} className="w-full h-11 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50">
+          <button type="submit" disabled={loading} className="w-full h-12 bg-primary text-white font-semibold rounded-xl disabled:opacity-50">
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
-          {!showForgot ? (
-            <button type="button" onClick={() => setShowForgot(true)} className="text-xs text-primary hover:underline text-center">
-              Forgot password?
-            </button>
-          ) : (
-            <div className="border border-border rounded-lg p-3 space-y-2">
-              <p className="text-xs font-semibold text-text">Reset Password</p>
-              <p className="text-xs text-muted">Use your <b>activation code</b> to reset credentials. Your activation code is printed on your license document.</p>
-              {forgotStep === 1 ? (
-                <>
-                  <input value={forgotCode} onChange={e => setForgotCode(e.target.value.toUpperCase())} maxLength={20}
-                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm uppercase tracking-wider"
-                    placeholder="XXXX-XXXX-XXXX-XXXX" />
-                  {forgotMsg && <p className={`text-xs ${forgotMsg.includes('verified')||forgotMsg.includes('reset') ? 'text-success' : 'text-danger'}`}>{forgotMsg}</p>}
-                  <button type="button" onClick={handleForgotSubmit}
-                    className="w-full h-9 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90">
-                    Verify Code
-                  </button>
-                </>
-              ) : (
-                <>
-                  <input value={newUser} onChange={e => setNewUser(e.target.value)}
-                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" placeholder="New username" />
-                  <input type="password" value={newPass} onChange={e => setNewPass(e.target.value)}
-                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" placeholder="New password (min 4 chars)" />
-                  {forgotMsg && <p className="text-xs text-danger">{forgotMsg}</p>}
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => { setShowForgot(false); setForgotStep(1); setForgotCode(''); setForgotMsg('') }}
-                      className="flex-1 h-9 border border-border text-muted text-sm rounded-lg">Cancel</button>
-                    <button type="button" onClick={handleForgotSubmit}
-                      className="flex-1 h-9 bg-success text-white text-sm font-medium rounded-lg hover:bg-success/90">Reset</button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-          <p className="text-xs text-muted text-center">Default: admin / admin123</p>
-          <div className="border-t border-border pt-3 mt-2">
-            <p className="text-xs text-muted text-center mb-2">Starting fresh on this device?</p>
-            <button type="button" onClick={async () => {
-              if (!confirm('This will delete ALL data (deliveries, trucks, sites) on this server. Are you sure?')) return
-              try {
-                const token = localStorage.getItem('stp_token')
-                await fetch(`${STP_API}/api/reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ confirm: 'RESET' }) })
-                localStorage.removeItem('stp_token'); localStorage.removeItem('stp_user'); localStorage.removeItem('stp_code'); localStorage.removeItem('stp_site_id')
-                window.location.reload()
-              } catch { alert('Reset failed') }
-            }} className="w-full h-9 border border-danger/30 text-danger text-sm font-medium rounded-lg hover:bg-danger/5 transition-all">
-              Start Fresh — Clear All Data
-            </button>
-          </div>
         </form>
       </div>
     </div>
@@ -413,7 +353,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
     if (!initial?.lot_number && truck) {
       const effectiveDate = initial?.date || new Date().toLocaleDateString('en-CA')
       setLotEdited(false)
-      api.deliveries.nextLot(Number(truck), effectiveDate).then(res => {
+      getNextLot(Number(truck), effectiveDate).then(res => {
         const truckRow = trucks.find(t => t.id === Number(truck))
         if (truckRow) {
           const autoLot = `${truckRow.plate_number}-${effectiveDate}-${String(res.nextSeq).padStart(3, '0')}`
@@ -440,7 +380,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
     if (!initial && site && lot.trim()) {
       setCheckingDup(true)
       try {
-        const res = await api.deliveries.checkLot(site, initial?.date || new Date().toLocaleDateString('en-CA'), lot.trim())
+        const res = await checkLot(site, initial?.date || new Date().toLocaleDateString('en-CA'), lot.trim())
         if (res.duplicate) {
           setDupWarning({ existing: res.existing })
           setCheckingDup(false)
@@ -566,13 +506,15 @@ function DashboardPage({ siteId, sites, trucks, onChangeSite }) {
   useEffect(() => {
     if (!siteId) { setLoading(false); return }
     setLoading(true)
-    Promise.all([
-      api.stats.daily(siteId, today),
-      api.stats.count(),
-      api.stats.alltime(),
-      api.stats.range(siteId, weekStart, today),
-    ]).then(([d, count, allTime, week]) => {
-      setStats({ ...d, grand_lots: count.count, grand_tons: allTime.total_tons || 0, weekStats: week.daily || [] })
+    initDB().then(() => {
+      return Promise.all([
+        getDailyStats(siteId, today),
+        getCount(),
+        getAllTimeStats(),
+        getRangeStats(siteId, weekStart, today),
+      ])
+    }).then(([d, count, allTime, week]) => {
+      setStats({ ...d.stats, grand_lots: count.count, grand_tons: allTime.total_tons || 0, weekStats: week.daily || [] })
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [siteId])
@@ -677,7 +619,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQ
     const requestId = ++requestRef.current
     setLoading(true)
     setPage(pageNum)
-    api.deliveries.list({
+    getDeliveries({
       site_id: siteId, page: pageNum, limit: 20,
       search: search || undefined, material_id: matFilter || undefined
     }).then(d => {
@@ -699,10 +641,10 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQ
     setSubmitting(true)
     try {
       if (editing?.id) {
-        await api.deliveries.update(editing.id, data)
+        await updateDelivery(editing.id, data)
         showToast('Delivery updated')
       } else {
-        await api.deliveries.create(data)
+        await createDelivery(data)
         showToast('Delivery logged')
       }
       setShowForm(false)
@@ -719,7 +661,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQ
   async function handleDelete(id) {
     if (!confirm('Delete this delivery?')) return
     try {
-      await api.deliveries.delete(id)
+      await deleteDelivery(id)
       showToast('Delivery deleted')
       load(page)
       if (onRefresh) onRefresh()
@@ -869,10 +811,10 @@ function TrucksPage({ trucks, onRefresh, setShowQrModalFor }) {
     setSubmitting(true)
     try {
       if (editing) {
-        await api.trucks.update(editing.id, { ...form, capacity_tons: Number(form.capacity_tons) || 0 })
+        await updateTruck(editing.id, { ...form, capacity_tons: Number(form.capacity_tons) || 0 })
         showToast('Truck updated')
       } else {
-        await api.trucks.create({ ...form, capacity_tons: Number(form.capacity_tons) || 0 })
+        await createTruck({ ...form, capacity_tons: Number(form.capacity_tons) || 0 })
         showToast('Truck added')
       }
       setShowForm(false)
@@ -889,7 +831,7 @@ function TrucksPage({ trucks, onRefresh, setShowQrModalFor }) {
   async function handleDelete(id) {
     if (!confirm('Archive this truck?')) return
     try {
-      await api.trucks.delete(id)
+      await deleteTruck(id)
       showToast('Truck archived')
       if (onRefresh) onRefresh()
     } catch (e) {
@@ -899,7 +841,7 @@ function TrucksPage({ trucks, onRefresh, setShowQrModalFor }) {
 
   async function handleReactivate(id) {
     try {
-      await api.trucks.update(id, { status: 'active' })
+      await reactivateTruck(id)
       showToast('Truck reactivated')
       if (onRefresh) onRefresh()
     } catch (e) {
@@ -1042,7 +984,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
   const restoreRef = useRef()
   const [siteForm, setSiteForm] = useState({ name: '', location: '' })
 
-  useEffect(() => { api.stats.count().then(r => setDeliveryCount(r.count || 0)).catch(() => {}) }, [])
+  // useEffect(() => { api.stats.count().then(r => setDeliveryCount(r.count || 0)).catch(() => {}) }, [])
 
   const today = new Date().toLocaleDateString('en-CA')
   const weekStart = (d => { d.setDate(d.getDate() - 6); return d.toLocaleDateString('en-CA') })(new Date())
@@ -1059,8 +1001,8 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
     e.preventDefault()
     if (!siteForm.name.trim()) return
     try {
-      if (editingSite) { await api.sites.update(editingSite.id, siteForm); showToast('Site updated') }
-      else { await api.sites.create(siteForm); showToast('Site added') }
+      if (editingSite) { await updateSite(editingSite.id, siteForm); showToast('Site updated') }
+      else { await createSite(siteForm); showToast('Site added') }
       setShowSiteForm(false)
       setEditingSite(null)
       setSiteForm({ name: '', location: '' })
@@ -1070,7 +1012,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
 
   async function deleteSite(id) {
     if (!confirm('Delete this site? All its deliveries will remain but the site will be removed.')) return
-    try { await api.sites.delete(id); showToast('Site deleted'); if (onRefreshSites) onRefreshSites() }
+    try { await deleteSite(id); showToast('Site deleted'); if (onRefreshSites) onRefreshSites() }
     catch (e) { showToast(e.message, 'error') }
   }
 
@@ -1078,8 +1020,8 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
     e.preventDefault()
     if (!matForm.name.trim()) return
     try {
-      if (editingMat) { await api.materials.update(editingMat.id, { name: matForm.name.trim() }); showToast('Material updated') }
-      else { await api.materials.create(matForm); showToast('Material added') }
+      if (editingMat) { await updateMaterial(editingMat.id, { name: matForm.name.trim() }); showToast('Material updated') }
+      else { await createMaterial(matForm); showToast('Material added') }
       setShowMatForm(false)
       setEditingMat(null)
       setMatForm({ name: '' })
@@ -1091,7 +1033,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
 
   async function deleteMat(id) {
     if (!confirm('Delete this material?')) return
-    try { await api.materials.delete(id); showToast('Material removed'); if (onRefreshMaterials) onRefreshMaterials() }
+    try { await deleteMaterial(id); showToast('Material removed'); if (onRefreshMaterials) onRefreshMaterials() }
     catch (e) { showToast(e.message, 'error') }
   }
 
@@ -1100,9 +1042,10 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
     if (!s) { showToast('Select a site first', 'error'); return }
     setReportLoading(true)
     try {
+      await initDB()
       const [data, deliveryData] = await Promise.all([
-        api.stats.range(s, repStart, repEnd, repMat||undefined),
-        api.deliveries.list({ site_id: s, start: repStart, end: repEnd, material_id: repMat||undefined, limit: 500 })
+        getRangeStats(s, repStart, repEnd, repMat||undefined),
+        getDeliveries({ site_id: s, start: repStart, end: repEnd, material_id: repMat||undefined, limit: 500 })
       ])
       setReportData(data)
       setReportDeliveries(deliveryData.deliveries || [])
@@ -1114,27 +1057,26 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
   function handleRestore() {
     const file = restoreRef.current?.files?.[0]
     if (!file) { showToast('No file selected', 'error'); return }
-    if (!file.name.endsWith('.db')) { showToast('Select a .db backup file', 'error'); return }
+    if (!file.name.endsWith('.json')) { showToast('Select a .json backup file', 'error'); return }
     if (!confirm('This will replace ALL current data with the backup. Are you sure?')) return
     const reader = new FileReader()
-    reader.onload = function(e) {
-      const base64 = e.target.result.split(',')[1]
-      const token = localStorage.getItem('stp_token')
-      fetch(`${STP_API}/api/backup/restore`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ file: base64 }),
-      }).then(res => { if (!res.ok) throw new Error('Restore failed'); return res.json() })
-        .then(() => { showToast('Database restored — reloading...'); setTimeout(() => window.location.reload(), 1500) })
-        .catch(e => showToast(e.message, 'error'))
+    reader.onload = async function(e) {
+      try {
+        const json = JSON.parse(e.target.result)
+        await initDB()
+        await importDatabase(json)
+        showToast('Database restored — reloading...')
+        setTimeout(() => window.location.reload(), 1500)
+      } catch (e) { showToast('Restore failed: ' + e.message, 'error') }
     }
-    reader.readAsDataURL(file)
+    reader.readAsText(file)
   }
 
   async function handleReset() {
     if (resetInput !== 'RESET') { showToast('Type RESET to confirm', 'error'); return }
     setResetting(true)
     try {
-      await api.reset.confirm()
+      await resetAllData()
       showToast('All deliveries deleted')
       setShowResetForm(false)
       setResetInput('')
@@ -1194,16 +1136,12 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
               <p className="text-xs text-muted">{reportData.byTruck?.length || 0} trucks · {reportData.grand?.total_lots || 0} lots · {(reportData.grand?.total_tons || 0).toFixed(1)}t total</p>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => downloadUrl(buildExportUrl('html', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined, site_name: sites.find(s => s.id == (repSite || siteId))?.name || '' }), `report-${repStart}-to-${repEnd}.html`)}
-                className="h-9 px-3 bg-primary text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-primary/90 active:scale-[0.98] transition-all">
+              <button onClick={async () => { try { await exportToPDF(repSite || siteId, repStart, repEnd, repMat||undefined, sites.find(s => s.id == (repSite || siteId))?.name || '', { ...reportData, deliveries: reportDeliveries }); showToast('PDF generated', 'success') } catch(e) { showToast(e.message, 'error') } }}
+                className="h-9 px-3 bg-primary text-white text-sm font-medium rounded-lg flex items-center gap-1.5">
                 <Download size={14} /> Print
               </button>
-              <button onClick={() => downloadUrl(buildExportUrl('pdf', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined }), `report-${repStart}-to-${repEnd}.pdf`)}
-                className="h-9 px-3 bg-danger text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-danger/90 active:scale-[0.98] transition-all">
-                PDF
-              </button>
-              <button onClick={() => downloadUrl(buildExportUrl('excel', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined }), `report-${repStart}-to-${repEnd}.xlsx`)}
-                className="h-9 px-3 bg-success text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-success/90 active:scale-[0.98] transition-all">
+              <button onClick={async () => { try { await exportToExcel(repSite || siteId, repStart, repEnd, repMat||undefined, { ...reportData, deliveries: reportDeliveries }); showToast('Excel generated', 'success') } catch(e) { showToast(e.message, 'error') } }}
+                className="h-9 px-3 bg-success text-white text-sm font-medium rounded-lg flex items-center gap-1.5">
                 <Download size={14} /> Excel
               </button>
               <button onClick={() => setShowReport(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-text">
@@ -1354,11 +1292,16 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
           <h3 className="text-sm font-semibold text-text">⚙️ Settings</h3>
         </div>
         <div className="p-4 flex flex-col gap-3">
-          <button onClick={() => { try { api.backup.download() } catch (e) { showToast('Backup failed: ' + e.message, 'error') } }}
+          <button onClick={async () => {
+              try {
+                const result = await exportDatabase()
+                showToast('Backup saved: ' + result.filename, 'success')
+              } catch (e) { showToast('Backup failed: ' + e.message, 'error') }
+            }}
             className="w-full h-11 bg-primary/10 text-primary text-sm font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-primary/20 active:scale-[0.98] transition-all">
             <Download size={16} /> Backup Database
           </button>
-          <input ref={restoreRef} type="file" accept=".db" className="hidden" onChange={handleRestore} />
+          <input ref={restoreRef} type="file" accept=".json" className="hidden" onChange={handleRestore} />
           <button onClick={() => restoreRef.current?.click()}
             className="w-full h-11 bg-accent/10 text-accent text-sm font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-accent/20 active:scale-[0.98] transition-all border border-accent/20">
             <RefreshCw size={16} /> Restore Database
@@ -1424,7 +1367,17 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
               if (!newUname.trim() && !newPwd) { showToast('Provide new username or password', 'error'); return }
               setChangingCreds(true)
               try {
-                await api.auth.changePassword({ currentPassword: curPwd, newUsername: newUname.trim() || undefined, newPassword: newPwd || undefined })
+                await initDB()
+                const user = JSON.parse(localStorage.getItem('stp_user') || '{}')
+                if (!user.username) throw new Error('Not logged in')
+                if (newPwd) {
+                  const result = await verifyUser(user.username, curPwd)
+                  if (!result.valid) throw new Error('Current password incorrect')
+                  await updateUserPassword(user.username, newPwd)
+                }
+                if (newUname.trim() && newUname.trim() !== user.username) {
+                  await createUser(newUname.trim(), newPwd || 'admin123')
+                }
                 showToast('Credentials updated')
                 setCurPwd(''); setNewUname(''); setNewPwd('')
               } catch (e) { showToast(e.message, 'error') }
@@ -1521,20 +1474,20 @@ export default function App() {
   }, [dark])
 
   // Auto-update check
-  useEffect(() => {
-    if (!token) return
-    fetch(`${STP_API}/api/version`).then(r => r.json()).then(data => {
-      if (data.version && data.version !== VERSION) { setUpdateAvailable(true); setUpdateDismissed(false) }
-    }).catch(() => {})
-  }, [])
+  // useEffect(() => {
+  //   if (!token) return
+  //   fetch(`${STP_API}/api/version`).then(r => r.json()).then(data => {
+  //     if (data.version && data.version !== VERSION) { setUpdateAvailable(true); setUpdateDismissed(false) }
+  //   }).catch(() => {})
+  // }, [])
 
   // Load data
-  function loadSites() { api.sites.list().then(setSites).catch(() => {}) }
-  function loadTrucks() { api.trucks.list().then(setTrucks).catch(() => {}) }
-  function loadMaterials() { api.materials.list().then(setMaterials).catch(() => {}) }
+  function loadSites() { initDB().then(() => getSites().then(setSites).catch(() => {})) }
+  function loadTrucks() { initDB().then(() => getTrucks().then(setTrucks).catch(() => {})) }
+  function loadMaterials() { initDB().then(() => getMaterials().then(setMaterials).catch(() => {})) }
   function loadAll() { loadSites(); loadTrucks(); loadMaterials() }
 
-  useEffect(() => { if (token && activated) loadAll() }, [])
+  useEffect(() => { if (activated) loadAll() }, [])
 
   // Auto-select first site
   useEffect(() => {
@@ -1547,9 +1500,15 @@ export default function App() {
   if (!activated && !token) return <ActivationScreen onSuccess={() => window.location.reload()} />
   if (!user && token) return <LoginPage onLogin={setUser} />
 
-  function handleLogout() {
-    localStorage.removeItem('stp_token'); localStorage.removeItem('stp_user'); localStorage.removeItem('stp_code')
-    window.location.hash = '#login'; window.location.reload()
+  async function handleLogout() {
+    try { await closeDB() } catch (e) { console.error('closeDB failed:', e) }
+    localStorage.removeItem('stp_token')
+    localStorage.removeItem('stp_user')
+    localStorage.removeItem('stp_code')
+    localStorage.removeItem('stp_remember_me')
+    localStorage.removeItem('stp_saved_username')
+    setUser(null)
+    window.location.reload()
   }
 
   function handleUpdateNow() {
