@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Soil Tracker Pro — License Generator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #F1F5F9; min-height: 100vh; padding: 20px; }
+    .container { max-width: 640px; margin: 0 auto; }
+    .header { text-align: center; margin-bottom: 32px; }
+    .header h1 { font-size: 28px; font-weight: 700; color: #0F172A; margin-bottom: 8px; }
+    .header h1 span { color: #D97706; }
+    .header p { font-size: 14px; color: #64748B; }
+    .card { background: white; border-radius: 16px; border: 1px solid #CBD5E1; padding: 24px; margin-bottom: 20px; }
+    .card h2 { font-size: 16px; font-weight: 600; color: #0F172A; margin-bottom: 16px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 20px; border-radius: 12px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s; }
+    .btn-primary { background: #2563EB; color: white; }
+    .btn-primary:hover { background: #1D4ED8; }
+    .input-group { display: flex; gap: 12px; margin-bottom: 20px; }
+    .input-group select { flex: 1; height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid #CBD5E1; font-size: 14px; background: white; }
+    .code-list { display: flex; flex-direction: column; gap: 12px; }
+    .code-item { display: flex; align-items: center; justify-content: space-between; padding: 16px; background: #F8FAFC; border-radius: 12px; border: 1px solid #E2E8F0; }
+    .code-item .code { font-family: 'Courier New', monospace; font-size: 16px; font-weight: 700; color: #0F172A; letter-spacing: 1px; }
+    .code-item .meta { font-size: 12px; color: #64748B; margin-top: 4px; }
+    .code-item .actions { display: flex; gap: 8px; }
+    .code-item .actions button { width: 36px; height: 36px; border-radius: 8px; border: 1px solid #CBD5E1; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+    .code-item .actions button:hover { background: #F1F5F9; }
+    .code-item .actions button.delete:hover { background: #FEF2F2; border-color: #FECACA; color: #DC2626; }
+    .empty-state { text-align: center; padding: 40px 20px; color: #64748B; }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #0F172A; color: white; padding: 12px 24px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: 0 10px 40px rgba(0,0,0,0.2); z-index: 9999; opacity: 0; transition: opacity 0.2s; }
+    .toast.show { opacity: 1; }
+    .toast.success { background: #16A34A; }
+    .toast.error { background: #DC2626; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .badge-active { background: #DCFCE7; color: #16A34A; }
+    .badge-used { background: #FEE2E2; color: #DC2626; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Soil Tracker <span>Pro</span></h1>
+      <p>Offline License Key Generator</p>
+    </div>
+    <div class="card">
+      <h2>📱 Generate Activation Code</h2>
+      <div class="input-group">
+        <select id="expiryDays">
+          <option value="0">No expiration</option>
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+        </select>
+        <button class="btn btn-primary" onclick="generateCode()">Generate Code</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🔑 Generated Codes</h2>
+      <div id="codeList" class="code-list">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script>
+    const API_BASE = window.location.origin;
+    let codes = [];
+    async function loadCodes() {
+      try {
+        const res = await fetch(`${API_BASE}/api/offline/codes`);
+        const data = await res.json();
+        codes = data.codes || [];
+        renderCodes();
+      } catch (e) { showToast('Failed to load codes', 'error'); }
+    }
+    async function generateCode() {
+      const expiryDays = document.getElementById('expiryDays').value;
+      try {
+        const res = await fetch(`${API_BASE}/api/offline/codes/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count: 1, expiryDays: parseInt(expiryDays) }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to generate');
+        codes.unshift(data.codes[0]);
+        renderCodes();
+        showToast('Code generated!', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+    async function copyCode(code) {
+      try { await navigator.clipboard.writeText(code); showToast('Code copied!', 'success'); }
+      catch (e) { showToast('Failed to copy', 'error'); }
+    }
+    async function deleteCode(id) {
+      if (!confirm('Delete this code?')) return;
+      try {
+        await fetch(`${API_BASE}/api/offline/codes/${id}`, { method: 'DELETE' });
+        codes = codes.filter(c => c.id !== id);
+        renderCodes();
+        showToast('Code deleted', 'success');
+      } catch (e) { showToast('Failed to delete', 'error'); }
+    }
+    function renderCodes() {
+      const container = document.getElementById('codeList');
+      if (codes.length === 0) { container.innerHTML = '<div class="empty-state">No codes yet</div>'; return; }
+      container.innerHTML = codes.map(code => {
+        const isActive = code.status === 'active';
+        const expiryDate = code.expires_at ? new Date(code.expires_at).toLocaleDateString() : 'Never';
+        return `<div class="code-item">
+          <div>
+            <div class="code">${code.code}</div>
+            <div class="meta">
+              <span class="badge ${isActive ? 'badge-active' : 'badge-used'}">${isActive ? 'Active' : 'Used'}</span>
+              ${isActive ? ` · Expires: ${expiryDate}` : ''}
+              ${code.used_at ? `<br>Used: ${new Date(code.used_at).toLocaleString()}` : ''}
+            </div>
+          </div>
+          <div class="actions">
+            ${isActive ? `<button onclick="copyCode('${code.code}')" title="Copy">📋</button>` : ''}
+            <button class="delete" onclick="deleteCode(${code.id})" title="Delete">🗑️</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = `toast show ${type}`;
+      setTimeout(() => toast.className = 'toast', 2500);
+    }
+    loadCodes();
+    setInterval(loadCodes, 10000);
+  </script>
+</body>
+</html>
