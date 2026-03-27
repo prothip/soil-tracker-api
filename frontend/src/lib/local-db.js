@@ -12,7 +12,7 @@ export async function initDB() {
   if (db) return db
 
   sqliteConnection = new SQLiteConnection(CapacitorSQLite)
-  
+
   try {
     db = await sqliteConnection.createConnection(DB_NAME, false, 'no-encryption', 1, false)
     await db.open()
@@ -85,7 +85,7 @@ export async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_deliveries_date ON deliveries(date);
     CREATE INDEX IF NOT EXISTS idx_deliveries_lot ON deliveries(site_id, lot_number);
   `
-  
+
   await db.execute(createTables)
   console.log('DB: Tables created successfully')
   return db
@@ -137,7 +137,7 @@ export async function updateSite(id, data) {
   if (data.location !== undefined) { fields.push('location = ?'); values.push(data.location) }
   fields.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
-  
+
   await db.run(`UPDATE sites SET ${fields.join(', ')} WHERE id = ?`, values)
   return { id, ...data }
 }
@@ -185,7 +185,7 @@ export async function updateTruck(id, data) {
   if (data.status !== undefined) { fields.push('status = ?'); values.push(data.status) }
   fields.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
-  
+
   await db.run(`UPDATE trucks SET ${fields.join(', ')} WHERE id = ?`, values)
   return { id, ...data }
 }
@@ -238,10 +238,10 @@ export async function deleteMaterial(id) {
 export async function getDeliveries(params = {}) {
   if (!db) await initDB()
   const { site_id, page = 1, limit = 20, search, material_id, start, end } = params
-  
+
   let whereClauses = []
   let whereValues = []
-  
+
   if (site_id) {
     whereClauses.push('d.site_id = ?')
     whereValues.push(site_id)
@@ -262,14 +262,14 @@ export async function getDeliveries(params = {}) {
     whereClauses.push('(d.lot_number LIKE ? OR t.plate_number LIKE ?)')
     whereValues.push(`%${search}%`, `%${search}%`)
   }
-  
+
   const whereSQL = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''
-  
+
   // Get total count
   const countQuery = `SELECT COUNT(*) as total FROM deliveries d LEFT JOIN trucks t ON d.truck_id = t.id ${whereSQL}`
   const countResult = await db.query(countQuery, whereValues)
   const total = countResult.values?.[0]?.total || 0
-  
+
   // Get paginated results with joins
   const offset = (page - 1) * limit
   const dataQuery = `
@@ -282,10 +282,10 @@ export async function getDeliveries(params = {}) {
     ORDER BY d.delivered_at DESC
     LIMIT ? OFFSET ?
   `
-  
+
   const dataValues = [...whereValues, limit, offset]
   const result = await db.query(dataQuery, dataValues)
-  
+
   return {
     deliveries: result.values || [],
     total,
@@ -339,7 +339,7 @@ export async function updateDelivery(id, data) {
   if (data.date !== undefined) { fields.push('date = ?'); values.push(data.date) }
   if (data.delivered_at !== undefined) { fields.push('delivered_at = ?'); values.push(data.delivered_at) }
   values.push(id)
-  
+
   await db.run(`UPDATE deliveries SET ${fields.join(', ')} WHERE id = ?`, values)
   return { id, ...data }
 }
@@ -364,17 +364,17 @@ export async function getNextLot(truckId, date) {
   // Get truck plate number
   const truck = await getTruck(truckId)
   if (!truck) return { nextSeq: 1 }
-  
+
   // Find the highest sequence number for this truck on this date
   const pattern = `${truck.plate_number}-${date}-%`
   const result = await db.query(
     `SELECT lot_number FROM deliveries WHERE lot_number LIKE ? ORDER BY lot_number DESC LIMIT 1`,
     [pattern]
   )
-  
+
   const lastLot = result.values?.[0]?.lot_number
   if (!lastLot) return { nextSeq: 1 }
-  
+
   const parts = lastLot.split('-')
   const lastSeq = parseInt(parts[parts.length - 1], 10) || 0
   return { nextSeq: lastSeq + 1 }
@@ -408,42 +408,52 @@ export async function getRangeStats(siteId, start, end, materialId) {
   if (!db) await initDB()
   let whereSQL = 'WHERE d.site_id = ? AND d.date BETWEEN ? AND ?'
   let values = [siteId, start, end]
-  
+
   if (materialId) {
     whereSQL += ' AND d.material_id = ?'
     values.push(materialId)
   }
-  
+
   // Daily breakdown
+  let dailyValues = [siteId, start, end]
+  let dailyWhere = 'WHERE site_id = ? AND date BETWEEN ? AND ?'
+  if (materialId) { dailyWhere += ' AND material_id = ?'; dailyValues.push(materialId) }
   const dailyQuery = `
     SELECT date, COUNT(*) as lots, COALESCE(SUM(weight_tons), 0) as tons
     FROM deliveries
-    ${whereSQL}
+    ${dailyWhere}
     GROUP BY date ORDER BY date
   `
-  const dailyResult = await db.query(dailyQuery, values)
+  const dailyResult = await db.query(dailyQuery, dailyValues)
   const daily = dailyResult.values || []
-  
+
   // By truck
+  let truckWhere = 'WHERE d.site_id = ? AND d.date BETWEEN ? AND ?'
+  let truckValues = [siteId, start, end]
+  if (materialId) { truckWhere += ' AND d.material_id = ?'; truckValues.push(materialId) }
   const truckQuery = `
     SELECT t.plate_number, t.driver_name, COUNT(*) as lots, COALESCE(SUM(d.weight_tons), 0) as tons
     FROM deliveries d
     JOIN trucks t ON d.truck_id = t.id
-    ${whereSQL}
+    ${truckWhere}
     GROUP BY t.id, t.plate_number, t.driver_name
     ORDER BY tons DESC
   `
-  const truckResult = await db.query(truckQuery, values)
+  const truckResult = await db.query(truckQuery, truckValues)
   const byTruck = truckResult.values || []
-  
+
   // Grand totals
+  let grandValues = [siteId, start, end]
+  let grandWhere = 'WHERE site_id = ? AND date BETWEEN ? AND ?'
+  if (materialId) { grandWhere += ' AND material_id = ?'; grandValues.push(materialId) }
   const grandQuery = `
     SELECT COUNT(*) as total_lots, COALESCE(SUM(weight_tons), 0) as total_tons
-    FROM deliveries ${whereSQL}
+    FROM deliveries
+    ${grandWhere}
   `
-  const grandResult = await db.query(grandQuery, values)
+  const grandResult = await db.query(grandQuery, grandValues)
   const grand = grandResult.values?.[0] || { total_lots: 0, total_tons: 0 }
-  
+
   return { daily, byTruck, grand }
 }
 
@@ -605,16 +615,16 @@ export async function exportDatabase() {
   const materials = await getMaterials()
   const deliveriesResult = await db.query('SELECT * FROM deliveries')
   const deliveries = deliveriesResult.values || []
-  
+
   const backupData = {
     version: 1,
     exported_at: new Date().toISOString(),
     data: { sites, trucks, materials, deliveries }
   }
-  
+
   const filename = `soil-tracker-backup-${new Date().toISOString().split('T')[0]}.json`
   const jsonString = JSON.stringify(backupData, null, 2)
-  
+
   // Try Directory.Documents first (more accessible to users on Android)
   try {
     const result = await Filesystem.writeFile({
@@ -627,7 +637,7 @@ export async function exportDatabase() {
     return { success: true, uri: result.uri, filename, location: 'Documents' }
   } catch (e) {
     console.error('Documents write failed, trying Data directory:', e)
-    
+
     // Fallback to app's Data directory
     try {
       const result = await Filesystem.writeFile({
@@ -640,7 +650,7 @@ export async function exportDatabase() {
       return { success: true, uri: result.uri, filename, location: 'App Data' }
     } catch (e2) {
       console.error('Data directory write failed:', e2)
-      
+
       // Final fallback: create blob and trigger web download
       try {
         const blob = new Blob([jsonString], { type: 'application/json' })
@@ -666,20 +676,20 @@ export async function exportDatabase() {
 export async function exportToPDF(siteId, start, end, materialId, siteName, reportData) {
   const html = generateReportHTML(siteName, start, end, reportData)
   const filename = `report-${start}-to-${end}.pdf`
-  
+
   // For now, generate HTML and trigger print dialog (browser's "Save as PDF")
   const printWindow = window.open('', '_blank')
   printWindow.document.write(html)
   printWindow.document.close()
   printWindow.print()
-  
+
   return { success: true, filename }
 }
 
 // Export to Excel (CSV format)
 export async function exportToExcel(siteId, start, end, materialId, reportData) {
   const deliveries = reportData.deliveries || []
-  
+
   // Create CSV content
   const headers = ['Date', 'Truck', 'Driver', 'Lot #', 'Material', 'Tons', 'Notes']
   const rows = deliveries.map(d => [
@@ -691,12 +701,12 @@ export async function exportToExcel(siteId, start, end, materialId, reportData) 
     d.weight_tons != null ? d.weight_tons.toFixed(1) : '0.0',
     (d.notes || '').replace(/"/g, '""')
   ])
-  
+
   const csvContent = [
     headers.join(','),
     ...rows.map(r => r.map(cell => `"${cell}"`).join(','))
   ].join('\n')
-  
+
   const filename = `report-${start}-to-${end}.xlsx`
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -707,7 +717,7 @@ export async function exportToExcel(siteId, start, end, materialId, reportData) 
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
-  
+
   return { success: true, filename }
 }
 
@@ -721,7 +731,7 @@ function generateReportHTML(siteName, start, end, reportData) {
   const grand = reportData.grand || { total_lots: 0, total_tons: 0 }
   const daily = reportData.daily || []
   const byTruck = reportData.byTruck || []
-  
+
   return `
 <!DOCTYPE html>
 <html>
@@ -742,7 +752,7 @@ function generateReportHTML(siteName, start, end, reportData) {
 <body>
   <h1>📊 Report: ${siteName}</h1>
   <p>Period: ${start} to ${end}</p>
-  
+
   <div class="summary">
     <div class="summary-card">
       <h3>${grand.total_lots}</h3>
@@ -757,13 +767,13 @@ function generateReportHTML(siteName, start, end, reportData) {
       <p>Trucks</p>
     </div>
   </div>
-  
+
   <h2>Daily Breakdown</h2>
   <table>
     <tr><th>Date</th><th>Lots</th><th>Tons</th></tr>
     ${daily.map(d => `<tr><td>${d.date}</td><td>${d.lots}</td><td>${d.tons.toFixed(1)}</td></tr>`).join('')}
   </table>
-  
+
   <h2>By Truck</h2>
   <table>
     <tr><th>Truck</th><th>Driver</th><th>Lots</th><th>Tons</th></tr>
@@ -777,10 +787,10 @@ function generateReportHTML(siteName, start, end, reportData) {
 export async function importDatabase(data) {
   if (!db) await initDB()
   if (!data || !data.data) throw new Error('Invalid backup data')
-  
+
   // Clear existing data
   await resetAllData()
-  
+
   // Import in order (respecting foreign keys)
   for (const site of data.data.sites || []) {
     await db.run(
@@ -788,21 +798,21 @@ export async function importDatabase(data) {
       [site.id, site.name, site.location, site.created_at, site.updated_at]
     )
   }
-  
+
   for (const truck of data.data.trucks || []) {
     await db.run(
       'INSERT INTO trucks (id, plate_number, driver_name, capacity_tons, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [truck.id, truck.plate_number, truck.driver_name, truck.capacity_tons, truck.status, truck.created_at, truck.updated_at]
     )
   }
-  
+
   for (const material of data.data.materials || []) {
     await db.run(
       'INSERT INTO materials (id, name, created_at) VALUES (?, ?, ?)',
       [material.id, material.name, material.created_at]
     )
   }
-  
+
   for (const delivery of data.data.deliveries || []) {
     await db.run(
       `INSERT INTO deliveries (id, site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at, created_at)
@@ -836,22 +846,22 @@ export async function pickAndImportDatabase() {
     // Use Capacitor's file picker (available via @capacitor/filesystem or native picker)
     // For Android, we'll use the native file picker through Capacitor
     const { FilePicker } = await import('@capacitor/filesystem')
-    
+
     const result = await FilePicker.pick({
       types: [{ mimeTypes: ['application/json'] }],
       multiple: false
     })
-    
+
     if (!result.files || result.files.length === 0) {
       throw new Error('No file selected')
     }
-    
+
     const file = result.files[0]
     // Read the file content
     const readResult = await Filesystem.readFile({
       path: file.path
     })
-    
+
     const data = JSON.parse(readResult.data)
     await importDatabase(data)
     return { success: true }
