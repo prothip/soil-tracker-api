@@ -1501,15 +1501,14 @@ export default function App() {
   if (!activated && !token) return <ActivationScreen onSuccess={() => window.location.reload()} />
   if (!user) return <LoginPage onLogin={setUser} />
 
-  async function handleLogout() {
-    try { await closeDB() } catch (e) { console.error('closeDB failed:', e) }
+  function handleLogout() {
+    try { closeDB() } catch (e) { console.error('closeDB failed:', e) }
     localStorage.removeItem('stp_token')
     localStorage.removeItem('stp_user')
     localStorage.removeItem('stp_code')
     localStorage.removeItem('stp_remember_me')
     localStorage.removeItem('stp_saved_username')
     setUser(null)
-    window.location.reload()
   }
 
   function handleUpdateNow() {
