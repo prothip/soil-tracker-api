@@ -71,30 +71,64 @@ router.post('/sync', async (req, res) => {
   if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
 
   try {
-    // Save deliveries
-    const insertDelivery = db.prepare(`
-      INSERT INTO deliveries (site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at, synced_from)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    // Disable FK checks for this bulk import, re-enable after
+    db.exec('PRAGMA foreign_keys = OFF');
+
+    // Sync sites
+    const upsertSite = db.prepare(`
+      INSERT INTO sites (id, name, location, created_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location
     `);
+    for (const s of sites) {
+      upsertSite.run(s.id, s.name, s.location || null, s.created_at || null);
+    }
 
+    // Sync trucks
+    const upsertTruck = db.prepare(`
+      INSERT INTO trucks (id, plate_number, driver_name, capacity_tons, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET plate_number=excluded.plate_number, driver_name=excluded.driver_name, status=excluded.status
+    `);
+    for (const t of trucks) {
+      upsertTruck.run(t.id, t.plate_number, t.driver_name || null, t.capacity_tons || 0, t.status || 'active', t.created_at || null);
+    }
+
+    // Sync materials
+    const upsertMat = db.prepare(`
+      INSERT INTO materials (id, name) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name
+    `);
+    for (const m of materials) {
+      upsertMat.run(m.id, m.name);
+    }
+
+    // Sync deliveries (only insert new ones, by lot_number + date + site_id)
+    const insertDelivery = db.prepare(`
+      INSERT INTO deliveries (site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const checkDelivery = db.prepare(
+      'SELECT id FROM deliveries WHERE site_id = ? AND lot_number = ? AND date = ?'
+    );
+    let deliveryCount = 0;
     for (const d of deliveries) {
-      // Check for duplicate by lot_number + date
-      const existing = db.prepare(
-        'SELECT id FROM deliveries WHERE lot_number = ? AND date = ? AND synced_from = ?'
-      ).get(d.lot_number, d.date, deviceId);
-
+      const existing = checkDelivery.get(d.site_id || null, d.lot_number, d.date);
       if (!existing) {
         insertDelivery.run(
           d.site_id || null, d.truck_id || null, d.lot_number, d.material_id || null,
-          d.weight_tons || 0, d.notes || '', d.date, d.delivered_at || null, deviceId
+          d.weight_tons || 0, d.notes || '', d.date, d.delivered_at || null
         );
+        deliveryCount++;
       }
     }
 
-    res.json({ success: true, serverTimestamp: new Date().toISOString() });
+    db.exec('PRAGMA foreign_keys = ON');
+
+    res.json({ success: true, serverTimestamp: new Date().toISOString(), deliveriesImported: deliveryCount });
   } catch (err) {
+    db.exec('PRAGMA foreign_keys = ON');
     console.error('Sync error:', err.message);
-    res.status(500).json({ error: 'Sync failed' });
+    res.status(500).json({ error: 'Sync failed: ' + err.message });
   }
 });
 
