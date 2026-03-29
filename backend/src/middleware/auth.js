@@ -19,6 +19,14 @@ function authMiddleware(req, res, next) {
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized', code: 'NO_TOKEN' });
   }
+
+  // Raw device IDs from offline activation (e.g. "3a9f...") — 32 hex chars
+  // These are valid without JWT verification
+  if (/^[a-f0-9]{32}$/i.test(token)) {
+    req.user = { type: 'device', role: 'user' };
+    return next();
+  }
+
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload;
