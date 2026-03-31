@@ -1,2 +1,2 @@
 #!/bin/bash
-node src/index.js
+cd /app && node src/index.js
