@@ -6,10 +6,11 @@ const { verifyCode, listCodes, generateCodes, deleteCode } = require('../db/offl
 
 // POST /api/offline/activate — register a device with an activation code
 router.post('/activate', (req, res) => {
-  const { activationCode } = req.body;
-  if (!activationCode) return res.status(400).json({ error: 'Code required' });
+  const { activationCode, code } = req.body;
+  const key = activationCode || code;
+  if (!key) return res.status(400).json({ error: 'Code required' });
 
-  const result = verifyCode(activationCode);
+  const result = verifyCode(key);
   if (result.error) return res.status(401).json({ error: result.error });
   
   res.json({ success: true, deviceId: result.deviceId });
