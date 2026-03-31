@@ -30,7 +30,8 @@ function saveCodes(data) {
 // Verify activation code
 function verifyCode(activationCode) {
   const data = loadCodes();
-  const code = data.codes.find(c => c.code === activationCode.toUpperCase());
+  const normalized = activationCode.toUpperCase().replace(/-/g, '');
+  const code = data.codes.find(c => c.code === normalized || c.code.replace(/-/g, '') === normalized);
   
   if (!code) return { error: 'Invalid activation code' };
   if (code.status === 'used') return { error: 'Code already used' };
