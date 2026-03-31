@@ -96,6 +96,9 @@ function LoginPage({ onLogin }) {
   const [confirm, setConfirm] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showReset, setShowReset] = useState(false)
+  const [resetCode, setResetCode] = useState('')
+  const [resetDone, setResetDone] = useState(false)
 
   useEffect(() => {
     initDB().then(async () => {
@@ -128,12 +131,50 @@ function LoginPage({ onLogin }) {
     if (!p) { setErr('Please enter password'); return }
     setErr(''); setLoading(true)
     try {
+      // Try backend first
+      let valid = false
+      try {
+        const res = await fetch(`${STP_API}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u.trim(), password: p })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.token && data.user) {
+            localStorage.setItem('stp_user', JSON.stringify(data.user))
+            localStorage.setItem('stp_token', data.token)
+            onLogin(data.user)
+            setLoading(false)
+            return
+          }
+        }
+      } catch (_) {}
+      // Fall back to local
       const result = await verifyUser(u.trim(), p)
       if (!result.valid) throw new Error('Invalid username or password')
       localStorage.setItem('stp_user', JSON.stringify(result.user))
       onLogin(result.user)
     } catch (e) {
       setErr(e.message || 'Login failed')
+    } finally { setLoading(false) }
+  }
+
+  async function handleReset(e) {
+    e.preventDefault()
+    if (!resetCode.trim()) { setErr('Please enter activation code'); return }
+    setErr(''); setLoading(true)
+    try {
+      const res = await fetch(`${STP_API}/api/reset-with-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: resetCode.trim().toUpperCase() })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Reset failed')
+      setResetDone(true)
+    } catch (e) {
+      setErr(e.message || 'Reset failed')
     } finally { setLoading(false) }
   }
 
@@ -198,7 +239,40 @@ function LoginPage({ onLogin }) {
           <button type="submit" disabled={loading} className="w-full h-12 bg-primary text-white font-semibold rounded-xl disabled:opacity-50">
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+          {!showReset && (
+            <button type="button" onClick={() => setShowReset(true)} className="w-full text-center text-sm text-muted hover:text-primary">
+              Forgot password?
+            </button>
+          )}
         </form>
+
+        {showReset && !resetDone && (
+          <form onSubmit={handleReset} className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4 mt-4">
+            <h3 className="font-semibold text-text">Reset Password</h3>
+            {err && <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg">{err}</div>}
+            <div>
+              <label className="text-sm font-medium text-text block mb-2">Activation Code</label>
+              <input value={resetCode} onChange={e => setResetCode(e.target.value)} placeholder="STP-XXXXXX"
+                className="w-full h-12 px-4 rounded-xl border border-border bg-surface text-base" autoComplete="off" />
+            </div>
+            <button type="submit" disabled={loading} className="w-full h-12 bg-accent text-white font-semibold rounded-xl disabled:opacity-50">
+              {loading ? 'Resetting...' : 'Reset Password'}
+            </button>
+            <button type="button" onClick={() => { setShowReset(false); setResetCode(''); setErr(''); }} className="w-full text-center text-sm text-muted hover:text-text">
+              Back to login
+            </button>
+          </form>
+        )}
+
+        {showReset && resetDone && (
+          <div className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4 mt-4 text-center">
+            <h3 className="font-semibold text-text">Password Reset</h3>
+            <p className="text-sm text-muted">Password has been reset to: <strong>admin123</strong></p>
+            <button onClick={() => { setShowReset(false); setResetDone(false); setResetCode(''); }} className="w-full h-12 bg-primary text-white font-semibold rounded-xl">
+              Back to Login
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -495,7 +569,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
 }
 
 // ─── Dashboard Page ─────────────────────────────────────────────────────────────
-function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0 }) {
+function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0, onRefresh }) {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const { show: showToast } = useToast()
@@ -503,27 +577,38 @@ function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0 }) 
   const today = new Date().toLocaleDateString('en-CA')
   const weekStart = (() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toLocaleDateString('en-CA') })()
 
-  useEffect(() => {
+  function loadStats() {
     if (!siteId) { setLoading(false); return }
     setLoading(true)
     initDB().then(() => {
+      // Use getRangeStats for both today and week (same as report)
       return Promise.all([
-        getDailyStats(siteId, today),
-        getCount(),
-        getAllTimeStats(),
+        getRangeStats(siteId, today, today),
         getRangeStats(siteId, weekStart, today),
       ])
-    }).then(([d, count, allTime, week]) => {
-      setStats({ ...d.stats, grand_lots: count.count, grand_tons: allTime.total_tons || 0, weekStats: week.daily || [] })
+    }).then(([todayData, weekData]) => {
+      setStats({
+        todayLots: todayData.grand?.total_lots || 0,
+        todayTons: todayData.grand?.total_tons || 0,
+        weekStats: weekData.daily || [],
+      })
       setLoading(false)
     }).catch(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadStats()
   }, [siteId, refreshKey])
 
-  const todayDeliveries = stats?.stats?.total_lots || 0
-  const todayTons = stats?.stats?.total_tons || 0
-  const totalDeliveries = stats?.grand_lots || 0
-  const totalTons = stats?.grand_tons || 0
-  const activeTrucks = trucks.filter(t => t.status === 'active').length
+  // Refresh when onRefresh is called
+  useEffect(() => {
+    if (!siteId || !onRefresh) return
+    window.__dashboardRefresh = loadStats
+  }, [siteId, today, weekStart, onRefresh])
+
+  const todayDeliveries = stats?.todayLots || 0
+  const todayTons = stats?.todayTons || 0
+  const weekData = stats?.weekStats || []
 
   return (
     <div className="p-4 space-y-4">
@@ -537,7 +622,7 @@ function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0 }) 
       {/* Site selector */}
       {sites.length > 0 && (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted">Viewing:</span>
+          <span className="text-xs text-muted">Site:</span>
           <SiteSelector sites={sites} siteId={siteId} onChange={onChangeSite} />
         </div>
       )}
@@ -546,52 +631,49 @@ function DashboardPage({ siteId, sites, trucks, onChangeSite, refreshKey = 0 }) 
         <div className="bg-surface rounded-xl border border-border p-8 text-center">
           <div className="text-3xl mb-2">📍</div>
           <p className="text-muted text-sm">Select a site to view dashboard</p>
-          <p className="text-xs text-muted/60 mt-1">Go to More → Sites to add a site first</p>
         </div>
       ) : (
         <>
           <div className="bg-surface rounded-xl border border-border p-4">
             <div className="text-xs text-muted mb-1">Today</div>
-            <div className="text-xs text-muted">{new Date().toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            <div className="text-sm text-muted">{new Date().toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="Today's Deliveries" value={loading ? '—' : todayDeliveries} sub="lots logged" />
-            <SummaryCard label="Today's Tons" value={loading ? '—' : todayTons.toFixed(1)} sub={`${todayTons > 0 ? '+' : ''}${todayTons.toFixed(1)}t`} color="text-primary" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="All Time — Lots" value={totalDeliveries} sub="total deliveries" color="text-text" />
-            <SummaryCard label="All Time — Tons" value={totalTons.toFixed(1)} sub="tonnes logged" color="text-accent" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="Active Trucks" value={activeTrucks} sub="registered" color="text-success" />
-            <SummaryCard label="Sites" value={sites.length} sub="total" color="text-muted" />
+            <div className="bg-surface rounded-xl border border-border p-4 text-center">
+              <div className="text-3xl font-bold text-text">{loading ? '—' : todayDeliveries}</div>
+              <div className="text-xs text-muted mt-1">Deliveries</div>
+            </div>
+            <div className="bg-surface rounded-xl border border-border p-4 text-center">
+              <div className="text-3xl font-bold text-primary">{loading ? '—' : todayTons.toFixed(1)}</div>
+              <div className="text-xs text-muted mt-1">Tons</div>
+            </div>
           </div>
 
           {/* Weekly chart */}
-          {stats?.weekStats?.length > 0 && (() => {
-            const maxTons = Math.max(...stats.weekStats.map(d => d.tons), 1)
-            return (
-              <div className="bg-surface rounded-xl border border-border p-4">
-                <h3 className="text-sm font-semibold text-text mb-3">Last 7 Days</h3>
-                <div className="grid grid-cols-7 gap-1.5 h-28 items-end">
-                  {stats.weekStats.map(d => {
-                    const h = d.tons > 0 ? Math.max(8, d.tons / maxTons * 96) : 4
-                    const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' })
-                    return (
-                      <div key={d.date} className="flex flex-col items-center gap-1 min-w-0">
-                        <div className="w-full bg-primary rounded-sm" style={{ height: `${h}px`, minHeight: '4px' }} />
-                        <span className="text-xs text-muted whitespace-nowrap">{dayLabel}</span>
-                        <span className="text-xs font-medium text-text whitespace-nowrap">{d.tons.toFixed(0)}t</span>
-                      </div>
-                    )
-                  })}
-                </div>
+          {stats?.weekStats?.length > 0 ? (
+            <div className="bg-surface rounded-xl border border-border p-4">
+              <h3 className="text-sm font-semibold text-text mb-3">Last 7 Days</h3>
+              <div className="grid grid-cols-7 gap-1.5 h-32 items-end">
+                {stats.weekStats.map(d => {
+                  const maxTons = Math.max(...stats.weekStats.map(w => w.tons), 1)
+                  const h = d.tons > 0 ? Math.max(8, d.tons / maxTons * 96) : 4
+                  const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' })
+                  return (
+                    <div key={d.date} className="flex flex-col items-center gap-1 min-w-0">
+                      <div className="w-full bg-primary rounded-sm" style={{ height: `${h}px`, minHeight: '4px' }} />
+                      <span className="text-xs text-muted whitespace-nowrap">{dayLabel}</span>
+                      <span className="text-xs font-medium text-text whitespace-nowrap">{d.tons.toFixed(0)}t</span>
+                    </div>
+                  )
+                })}
               </div>
-            )
-          })()}
+            </div>
+          ) : (
+            <div className="bg-surface rounded-xl border border-border p-4 text-center">
+              <div className="text-muted text-sm">No data for the last 7 days</div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -651,6 +733,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQ
       setEditing(null)
       load(1)
       if (onRefresh) onRefresh()
+      window.__dashboardRefresh && window.__dashboardRefresh()
     } catch (e) {
       showToast(e.message, 'error')
     } finally {
@@ -665,6 +748,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQ
       showToast('Delivery deleted')
       load(page)
       if (onRefresh) onRefresh()
+      window.__dashboardRefresh && window.__dashboardRefresh()
     } catch (e) {
       showToast(e.message, 'error')
     }
@@ -1539,7 +1623,7 @@ export default function App() {
       )}
 
       <main className="flex-1 overflow-y-auto pb-[72px]">
-        {tab === 'dashboard' && <DashboardPage key={refreshKey} siteId={siteId} sites={sites} trucks={trucks} onChangeSite={setSiteId} />}
+        {tab === 'dashboard' && <DashboardPage key={refreshKey} siteId={siteId} sites={sites} trucks={trucks} onChangeSite={setSiteId} onRefresh={loadAll} refreshKey={refreshKey} />}
         {tab === 'log' && <LogPage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefresh={loadAll} showQr={showQr} setShowQr={setShowQr} onQrScan={handleQrScan} scannedTruckId={scannedTruckId} onScannedTruckUsed={() => setScannedTruckId(null)} />}
         {tab === 'trucks' && <TrucksPage trucks={trucks} onRefresh={loadTrucks} setShowQrModalFor={setShowQrModalFor} />}
         {tab === 'more' && <MorePage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefreshSites={loadSites} onRefreshTrucks={loadTrucks} onRefreshMaterials={loadMaterials} onRefreshAll={loadAll} user={user} />}

@@ -1,5 +1,9 @@
 // Customer app: uses device tokens via activation code
-const STP_API = 'https://soil-tracker-api-production.up.railway.app'
+// In dev (localhost): uses Vite proxy → http://localhost:3002
+// In production: uses Railway or configured API URL
+const STP_API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'https://brilliant-tranquility-production.up.railway.app'
+  : 'https://brilliant-tranquility-production.up.railway.app'
 
 export { STP_API }
 

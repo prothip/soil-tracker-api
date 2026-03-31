@@ -4,9 +4,14 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
+function getCustomerId(req) {
+  return req.user?.customerId || 1;
+}
+
 // Daily stats for a site + date
 router.get('/daily', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { site_id, date } = req.query;
   if (!site_id || !date) return res.status(400).json({ error: 'site_id and date required' });
 
@@ -14,8 +19,8 @@ router.get('/daily', (req, res) => {
     SELECT COUNT(*) as total_lots,
            COUNT(DISTINCT truck_id) as unique_trucks,
            COALESCE(SUM(weight_tons), 0) as total_tons
-    FROM deliveries WHERE site_id = ? AND date = ?
-  `).get(site_id, date);
+    FROM deliveries WHERE site_id = ? AND date = ? AND customer_id = ?
+  `).get(site_id, date, customerId);
 
   // Weekly stats (last 7 days including date)
   const weekStart = new Date(date);
@@ -25,10 +30,10 @@ router.get('/daily', (req, res) => {
   const weekStats = db.prepare(`
     SELECT date, COUNT(*) as lots, COALESCE(SUM(weight_tons),0) as tons
     FROM deliveries
-    WHERE site_id = ? AND date >= ? AND date <= ?
+    WHERE site_id = ? AND date >= ? AND date <= ? AND customer_id = ?
     GROUP BY date
     ORDER BY date ASC
-  `).all(site_id, weekStart.toISOString().split('T')[0], weekEnd);
+  `).all(site_id, weekStart.toISOString().split('T')[0], weekEnd, customerId);
 
   // Recent deliveries (last 5)
   const recent = db.prepare(`
@@ -37,9 +42,9 @@ router.get('/daily', (req, res) => {
     FROM deliveries d
     LEFT JOIN trucks t ON d.truck_id=t.id
     LEFT JOIN materials m ON d.material_id=m.id
-    WHERE d.site_id = ?
+    WHERE d.site_id = ? AND d.customer_id = ?
     ORDER BY d.delivered_at DESC LIMIT 5
-  `).all(site_id);
+  `).all(site_id, customerId);
 
   res.json({ stats, weekStats, recent });
 });
@@ -47,11 +52,12 @@ router.get('/daily', (req, res) => {
 // Stats for a date range (for charts)
 router.get('/range', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { site_id, start, end, material_id } = req.query;
   if (!site_id || !start || !end) return res.status(400).json({ error: 'site_id, start, end required' });
 
-  let where = ['d.site_id = ?', 'd.date >= ?', 'd.date <= ?'];
-  const params = [site_id, start, end];
+  let where = ['d.site_id = ?', 'd.date >= ?', 'd.date <= ?', 'd.customer_id = ?'];
+  const params = [site_id, start, end, customerId];
   if (material_id) { where.push('d.material_id = ?'); params.push(material_id); }
 
   const daily = db.prepare(`
@@ -77,17 +83,19 @@ router.get('/range', (req, res) => {
   res.json({ daily, byTruck, grand });
 });
 
-// Total delivery count
+// Total delivery count for customer
 router.get('/count', (req, res) => {
   const db = require('../db/database');
-  const row = db.prepare('SELECT COUNT(*) as count FROM deliveries').get();
+  const customerId = getCustomerId(req);
+  const row = db.prepare('SELECT COUNT(*) as count FROM deliveries WHERE customer_id = ?').get(customerId);
   res.json({ count: row.count });
 });
 
-// All-time totals (for dashboard "all time" stats)
+// All-time totals for customer
 router.get('/alltime', (req, res) => {
   const db = require('../db/database');
-  const row = db.prepare('SELECT COUNT(*) as total_lots, COALESCE(SUM(weight_tons), 0) as total_tons FROM deliveries').get();
+  const customerId = getCustomerId(req);
+  const row = db.prepare('SELECT COUNT(*) as total_lots, COALESCE(SUM(weight_tons), 0) as total_tons FROM deliveries WHERE customer_id = ?').get(customerId);
   res.json(row);
 });
 

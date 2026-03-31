@@ -4,15 +4,22 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
+function getCustomerId(req) {
+  return req.user?.customerId || 1;
+}
+
 router.get('/', (req, res) => {
   const db = require('../db/database');
-  const { site_id, date, truck_id, material_id, search, page = 1, limit = 20 } = req.query;
+  const customerId = getCustomerId(req);
+  const { site_id, date, truck_id, material_id, search, page = 1, limit = 20, start, end } = req.query;
 
-  let where = ['1=1'];
-  const params = [];
+  let where = ['d.customer_id = ?'];
+  const params = [customerId];
 
   if (site_id) { where.push('d.site_id = ?'); params.push(site_id); }
   if (date) { where.push('d.date = ?'); params.push(date); }
+  if (start) { where.push('d.date >= ?'); params.push(start); }
+  if (end) { where.push('d.date <= ?'); params.push(end); }
   if (truck_id) { where.push('d.truck_id = ?'); params.push(truck_id); }
   if (material_id) { where.push('d.material_id = ?'); params.push(material_id); }
   if (search) { where.push('(t.plate_number LIKE ? OR d.lot_number LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
@@ -44,6 +51,7 @@ router.get('/', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at } = req.body;
   if (!site_id || !truck_id) {
     return res.status(400).json({ error: 'site_id and truck_id required', code: 'MISSING_FIELDS' });
@@ -54,7 +62,7 @@ router.post('/', (req, res) => {
   let finalLotNumber = lot_number;
   if (!finalLotNumber) {
     // Auto-generate lot number: {plate_number}-{date}-{SEQ}
-    const truckRow = db.prepare('SELECT plate_number FROM trucks WHERE id = ?').get(Number(truck_id));
+    const truckRow = db.prepare('SELECT plate_number FROM trucks WHERE id = ? AND customer_id = ?').get(Number(truck_id), customerId);
     if (!truckRow) {
       return res.status(400).json({ error: 'Truck not found', code: 'TRUCK_NOT_FOUND' });
     }
@@ -63,10 +71,10 @@ router.post('/', (req, res) => {
     // Get next sequence for this truck+date
     const lastRow = db.prepare(`
       SELECT lot_number FROM deliveries
-      WHERE truck_id = ? AND date = ?
+      WHERE truck_id = ? AND date = ? AND customer_id = ?
       ORDER BY id DESC
       LIMIT 1
-    `).get(Number(truck_id), finalDate);
+    `).get(Number(truck_id), finalDate, customerId);
 
     let nextSeq = 1;
     if (lastRow && lastRow.lot_number) {
@@ -85,9 +93,9 @@ router.post('/', (req, res) => {
 
   try {
     const result = db.prepare(`
-      INSERT INTO deliveries (site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(site_id, truck_id, finalLotNumber.toUpperCase(), material_id||null, weight_tons||0, notes||'', finalDate, finalTime);
+      INSERT INTO deliveries (customer_id, site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(customerId, site_id, truck_id, finalLotNumber.toUpperCase(), material_id||null, weight_tons||0, notes||'', finalDate, finalTime);
 
     const row = db.prepare(`
       SELECT d.id, d.lot_number, d.weight_tons, d.notes, d.delivered_at, d.date,
@@ -105,11 +113,12 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { id } = req.params;
   const { site_id, truck_id, lot_number, material_id, weight_tons, notes, date, delivered_at } = req.body;
 
   // Fetch existing delivery to merge with partial updates
-  const existing = db.prepare('SELECT * FROM deliveries WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT * FROM deliveries WHERE id = ? AND customer_id = ?').get(id, customerId);
   if (!existing) return res.status(404).json({ error: 'Delivery not found', code: 'NOT_FOUND' });
 
   const updated = {
@@ -125,8 +134,8 @@ router.put('/:id', (req, res) => {
 
   const info = db.prepare(`
     UPDATE deliveries SET site_id=?, truck_id=?, lot_number=?, material_id=?, weight_tons=?, notes=?, date=?, delivered_at=?
-    WHERE id=?
-  `).run(updated.site_id, updated.truck_id, updated.lot_number, updated.material_id, updated.weight_tons, updated.notes, updated.date, updated.delivered_at, id);
+    WHERE id=? AND customer_id=?
+  `).run(updated.site_id, updated.truck_id, updated.lot_number, updated.material_id, updated.weight_tons, updated.notes, updated.date, updated.delivered_at, id, customerId);
   if (info.changes === 0) return res.status(404).json({ error: 'Delivery not found', code: 'NOT_FOUND' });
 
   const row = db.prepare(`
@@ -141,7 +150,8 @@ router.put('/:id', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const db = require('../db/database');
-  const info = db.prepare('DELETE FROM deliveries WHERE id = ?').run(req.params.id);
+  const customerId = getCustomerId(req);
+  const info = db.prepare('DELETE FROM deliveries WHERE id = ? AND customer_id = ?').run(req.params.id, customerId);
   if (info.changes === 0) return res.status(404).json({ error: 'Delivery not found', code: 'NOT_FOUND' });
   res.json({ success: true });
 });
@@ -149,20 +159,20 @@ router.delete('/:id', (req, res) => {
 // Get next lot sequence for a truck+date combination
 router.get('/next-lot', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { truck_id, date } = req.query;
   if (!truck_id || !date) {
     return res.status(400).json({ error: 'truck_id and date required' });
   }
   const row = db.prepare(`
     SELECT lot_number FROM deliveries
-    WHERE truck_id = ? AND date = ?
+    WHERE truck_id = ? AND date = ? AND customer_id = ?
     ORDER BY id DESC
     LIMIT 1
-  `).get(Number(truck_id), date);
+  `).get(Number(truck_id), date, customerId);
 
   let nextSeq = 1;
   if (row && row.lot_number) {
-    // Extract the last segment (SEQ) from lot_number format: {plate}-{date}-{SEQ}
     const parts = row.lot_number.split('-');
     const lastPart = parts[parts.length - 1];
     const seq = parseInt(lastPart, 10);
@@ -177,13 +187,14 @@ router.get('/next-lot', (req, res) => {
 // Check for duplicate lot number (site_id + date + lot_number)
 router.get('/check-lot', (req, res) => {
   const db = require('../db/database');
+  const customerId = getCustomerId(req);
   const { site_id, date, lot_number } = req.query;
   if (!site_id || !date || !lot_number) {
     return res.status(400).json({ error: 'site_id, date, and lot_number required' });
   }
   const row = db.prepare(
-    'SELECT id, lot_number, date FROM deliveries WHERE site_id = ? AND date = ? AND lot_number = ?'
-  ).get(Number(site_id), date, lot_number.toUpperCase());
+    'SELECT id, lot_number, date FROM deliveries WHERE site_id = ? AND date = ? AND lot_number = ? AND customer_id = ?'
+  ).get(Number(site_id), date, lot_number.toUpperCase(), customerId);
   res.json({ duplicate: !!row, existing: row || null });
 });
 

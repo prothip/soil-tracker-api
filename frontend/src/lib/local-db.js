@@ -1,6 +1,9 @@
 // Local IndexedDB Database for Offline-First Soil Tracker Pro (Web Platform)
 // Uses IndexedDB instead of CapacitorSQLite for browser compatibility
 
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
 const DB_NAME = 'soil_tracker_db'
 const DB_VERSION = 1
 let db = null
@@ -63,7 +66,7 @@ function idbGetAll(storeName, indexName, key) {
   })
 }
 
-function idbPut(storeName, value) {
+export function idbPut(storeName, value) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite')
     const store = tx.objectStore(storeName)
@@ -78,6 +81,16 @@ function idbDelete(storeName, key) {
     const tx = db.transaction(storeName, 'readwrite')
     const store = tx.objectStore(storeName)
     const req = store.delete(key)
+    req.onsuccess = () => resolve(req)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+export function idbClear(storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite')
+    const store = tx.objectStore(storeName)
+    const req = store.clear()
     req.onsuccess = () => resolve(req)
     req.onerror = () => reject(req.error)
   })
@@ -500,7 +513,61 @@ export async function pickAndImportDatabase() {
   })
 }
 
-// ─── PDF / Excel Stubs (web) ─────────────────────────────────────────────────
-export async function exportToPDF() { throw new Error('PDF export not supported in web PWA') }
+// ─── PDF Export (web) ────────────────────────────────────────────────────────
+export async function exportToPDF(siteId, startDate, endDate, materialId, siteName, reportData) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  // Header
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Soil Tracker Pro - Delivery Report', 14, 15);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${siteName || 'All Sites'}  |  ${startDate} to ${endDate}`, 14, 22);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 27);
+
+  // Summary boxes
+  const grand = reportData.grand || {};
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Total Lots: ${grand.total_lots || 0}`, 14, 35);
+  doc.text(`Total Tons: ${(grand.total_tons || 0).toFixed(1)}t`, 80, 35);
+  doc.text(`Trucks: ${reportData.byTruck?.length || 0}`, 140, 35);
+
+  // Daily table
+  const daily = reportData.daily || [];
+  if (daily.length > 0) {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Daily Summary', 14, 45);
+    autoTable(doc, {
+      startY: 48,
+      head: [['Date', 'Lots', 'Tons', 'Trucks']],
+      body: daily.map(d => [d.date, d.lots, d.tons.toFixed(1), d.trucks]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [59, 130, 246] },
+      margin: { left: 14, right: 14 },
+    });
+  }
+
+  // By-truck table
+  const byTruck = reportData.byTruck || [];
+  if (byTruck.length > 0) {
+    const finalY = doc.lastAutoTable?.finalY || 48;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('By Truck', 14, finalY + 8);
+    autoTable(doc, {
+      startY: finalY + 12,
+      head: [['Truck', 'Driver', 'Lots', 'Tons']],
+      body: byTruck.map(t => [t.plate_number, t.driver_name, t.lots, t.tons.toFixed(1)]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [59, 130, 246] },
+      margin: { left: 14, right: 14 },
+    });
+  }
+
+  doc.save(`soil-report-${startDate}-to-${endDate}.pdf`);
+}
 export async function exportToExcel() { return exportDatabase() }
 export async function exportToCSV() { return exportDatabase() }

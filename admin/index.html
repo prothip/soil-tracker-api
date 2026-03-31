@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Soil Tracker Pro - Code Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .container { max-width: 700px; margin: 0 auto; padding: 40px 20px; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    .subtitle { color: #64748b; margin-bottom: 40px; font-size: 14px; }
+    .card { background: #1e293b; border-radius: 16px; padding: 28px; margin-bottom: 20px; border: 1px solid #334155; }
+    .card h2 { font-size: 14px; color: #94a3b8; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+    .btn { padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { background: #1e40af; opacity: 0.6; cursor: not-allowed; }
+    .btn-copy { background: #334155; color: #e2e8f0; padding: 8px 14px; font-size: 12px; }
+    .btn-copy:hover { background: #475569; }
+    input[type="number"] { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 12px 16px; border-radius: 8px; font-size: 16px; width: 120px; margin-right: 12px; }
+    .code-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 16px; }
+    .code-item { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 13px; color: #fbbf24; display: flex; justify-content: space-between; align-items: center; }
+    .code-item.used { opacity: 0.4; }
+    .code-item.used::before { content: '✓ '; color: #22c55e; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(100px); background: #22c55e; color: white; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; transition: transform 0.3s; z-index: 1000; }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .status { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    .status-dot.offline { background: #ef4444; }
+    .section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+    .info { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; font-size: 13px; color: #94a3b8; line-height: 1.6; }
+    .info strong { color: #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔑 Code Generator</h1>
+    <p class="subtitle">Soil Tracker Pro — Activation Codes</p>
+
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Checking backend...</span>
+    </div>
+
+    <!-- Generate -->
+    <div class="card">
+      <h2>Generate New Codes</h2>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;">
+        <input type="number" id="countInput" value="5" min="1" max="50">
+        <button class="btn btn-primary" id="generateBtn" onclick="generate()">Generate Codes</button>
+      </div>
+      <div class="code-grid" id="generatedCodes"></div>
+    </div>
+
+    <!-- Existing Codes -->
+    <div class="card">
+      <h2>All Codes</h2>
+      <div style="margin-bottom:12px;color:#64748b;font-size:13px;">
+        <span id="activeCount">0</span> active · <span id="usedCount">0</span> used · <span id="totalCount">0</span> total
+      </div>
+      <div class="code-grid" id="codesList" style="max-height:400px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- Info -->
+    <div class="info">
+      <strong>How to use:</strong><br>
+      1. Generate codes above<br>
+      2. Share with customers<br>
+      3. Customer enters code in app to activate<br><br>
+      <strong>API:</strong> brilliant-tranquility-production.up.railway.app<br>
+      <strong>Format:</strong> STP-XXXXXXXX (8 hex chars)
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = 'https://brilliant-tranquility-production.up.railway.app';
+
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    async function generate() {
+      const count = parseInt(document.getElementById('countInput').value) || 5;
+      const btn = document.getElementById('generateBtn');
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+      try {
+        const res = await fetch(API + '/api/offline/codes/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count, expiryDays: 30 })
+        });
+        const data = await res.json();
+        if (data.codes) {
+          renderGenerated(data.codes);
+          loadCodes();
+          toast(`Generated ${data.codes.length} codes!`);
+        } else {
+          toast('Error: ' + JSON.stringify(data));
+        }
+      } catch(e) {
+        toast('Network error: ' + e.message);
+      }
+      btn.disabled = false;
+      btn.textContent = 'Generate Codes';
+    }
+
+    function renderGenerated(codes) {
+      const el = document.getElementById('generatedCodes');
+      el.innerHTML = codes.map(c => `
+        <div class="code-item">
+          <span>${c.code}</span>
+          <button class="btn btn-copy" onclick="copy('${c.code}')">Copy</button>
+        </div>
+      `).join('');
+    }
+
+    async function loadCodes() {
+      try {
+        const res = await fetch(API + '/api/offline/codes');
+        const data = await res.json();
+        if (data.codes) {
+          const codes = data.codes.sort((a,b) => b.id - a.id);
+          const active = codes.filter(c => c.status === 'active');
+          const used = codes.filter(c => c.status === 'used');
+          document.getElementById('activeCount').textContent = active.length;
+          document.getElementById('usedCount').textContent = used.length;
+          document.getElementById('totalCount').textContent = codes.length;
+          document.getElementById('codesList').innerHTML = codes.map(c => `
+            <div class="code-item ${c.status === 'used' ? 'used' : ''}">
+              <span>${c.code}</span>
+              <button class="btn btn-copy" onclick="copy('${c.code}')">Copy</button>
+            </div>
+          `).join('');
+          // Auto-copy first generated if new
+          if (active.length > 0) {
+            document.getElementById('statusDot').classList.remove('offline');
+            document.getElementById('statusText').textContent = 'Backend connected ✅';
+          }
+        }
+      } catch(e) {
+        document.getElementById('statusDot').classList.add('offline');
+        document.getElementById('statusText').textContent = 'Backend offline ❌';
+      }
+    }
+
+    function copy(code) {
+      navigator.clipboard.writeText(code).then(() => toast('Copied: ' + code));
+    }
+
+    loadCodes();
+  </script>
+</body>
+</html>

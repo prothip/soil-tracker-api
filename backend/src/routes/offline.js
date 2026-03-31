@@ -7,11 +7,18 @@ const db = require('../db/database');
 
 // POST /api/offline/activate — register a device with an activation code
 router.post('/activate', (req, res) => {
-  const { activationCode } = req.body;
+  const { activationCode, deviceId: existingDeviceId } = req.body;
   if (!activationCode) return res.status(400).json({ error: 'Code required' });
 
   const normalized = activationCode.trim().toUpperCase();
-  const code = db.prepare('SELECT * FROM offline_activations WHERE code = ?').get(normalized);
+  
+  // Check offline_activations first
+  let code = db.prepare('SELECT * FROM offline_activations WHERE code = ?').get(normalized);
+  
+  // If not found, check the new codes table
+  if (!code) {
+    code = db.prepare('SELECT c.*, cu.id as customer_id FROM codes c LEFT JOIN customers cu ON cu.id = c.customer_id WHERE c.code = ?').get(normalized);
+  }
 
   if (!code) return res.status(401).json({ error: 'Invalid activation code' });
   if (code.status === 'used') return res.status(401).json({ error: 'Code already used' });
@@ -19,12 +26,46 @@ router.post('/activate', (req, res) => {
     return res.status(401).json({ error: 'Code has expired' });
   }
 
-  // Mark as used
-  db.prepare("UPDATE offline_activations SET status = 'used', used_at = ? WHERE id = ?")
-    .run(new Date().toISOString(), code.id);
+  // Get or create customer for this code
+  let customerId = code.customer_id;
+  if (!customerId) {
+    // Create new customer
+    const result = db.prepare('INSERT INTO customers (name, activation_code, status) VALUES (?, ?, ?)').run(
+      `Customer ${normalized}`,
+      normalized,
+      'active'
+    );
+    customerId = result.lastInsertRowid;
+    
+    // Update the code with customer_id
+    if (code.id) {
+      db.prepare('UPDATE codes SET customer_id = ? WHERE id = ?').run(customerId, code.id);
+    }
+  }
 
-  const deviceId = crypto.randomBytes(16).toString('hex');
-  res.json({ success: true, deviceId });
+  // Mark as used
+  if (code.used_at === undefined) {
+    // old offline_activations table
+    db.prepare("UPDATE offline_activations SET status = 'used', used_at = ? WHERE code = ?")
+      .run(new Date().toISOString(), normalized);
+  }
+
+  // Generate device token with customer_id
+  const deviceToken = crypto.randomBytes(16).toString('hex');
+  
+  // Store device-customer mapping
+  db.prepare('INSERT OR REPLACE INTO licenses (license_key, customer_id, fingerprint, status) VALUES (?, ?, ?, ?)').run(
+    deviceToken,
+    customerId,
+    existingDeviceId || '',
+    'active'
+  );
+
+  res.json({ 
+    success: true, 
+    deviceId: deviceToken,
+    customerId: customerId
+  });
 });
 
 // ─── Auth middleware ─────────────────────────────────────────────────────────
@@ -33,17 +74,17 @@ const { authMiddleware } = require('../middleware/auth');
 // GET /api/offline/codes — list all offline activation codes (admin only)
 router.get('/codes', authMiddleware, (req, res) => {
   const codes = db.prepare(
-    'SELECT id, code, status, expires_at, created_at, used_at FROM offline_activations ORDER BY id DESC'
+    'SELECT c.*, cu.name as customer_name FROM codes c LEFT JOIN customers cu ON cu.id = c.customer_id ORDER BY c.id DESC'
   ).all();
   res.json({ codes });
 });
 
 // POST /api/offline/codes/generate — generate new activation codes (admin only)
 router.post('/codes/generate', authMiddleware, (req, res) => {
-  const { count = 1, expiryDays = 30 } = req.body;
+  const { count = 1, expiryDays = 30, customerId } = req.body;
   const codes = [];
   const insert = db.prepare(
-    'INSERT INTO offline_activations (code, expires_at, status) VALUES (?, ?, ?)'
+    'INSERT INTO codes (code, customer_id, expires_at, status) VALUES (?, ?, ?, ?)'
   );
 
   for (let i = 0; i < count; i++) {
@@ -52,8 +93,8 @@ router.post('/codes/generate', authMiddleware, (req, res) => {
     const expiresAt = expiryDays > 0
       ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
       : null;
-    const result = insert.run(code, expiresAt, 'active');
-    codes.push({ id: result.lastInsertRowid, code, expires_at: expiresAt, status: 'active' });
+    const result = insert.run(code, customerId || null, expiresAt, 'active');
+    codes.push({ id: result.lastInsertRowid, code, expires_at: expiresAt, status: 'active', customer_id: customerId || null });
   }
 
   res.json({ codes });
