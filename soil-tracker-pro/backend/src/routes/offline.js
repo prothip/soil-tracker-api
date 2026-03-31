@@ -36,4 +36,10 @@ router.delete('/codes/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// POST /api/offline/seed — TEMP: seed STP codes (remove after use)
+router.post('/seed', (req, res) => {
+  const codes = generateCodes(5);
+  res.json({ success: true, codes });
+});
+
 module.exports = router;
